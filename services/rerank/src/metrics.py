@@ -15,4 +15,5 @@ REQUEST_LATENCY = Histogram(
 DOCUMENT_COUNTER = Counter(
     "rerank_documents_total",
     "Number of documents processed by the rerank endpoint",
+    labelnames=("model",),
 )

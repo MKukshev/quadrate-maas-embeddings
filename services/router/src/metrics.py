@@ -13,3 +13,27 @@ REQUEST_LATENCY = Histogram(
     "Request latency in seconds",
     ["endpoint", "method"],
 )
+
+UPSTREAM_LATENCY = Histogram(
+    "router_upstream_latency_seconds",
+    "Latency of requests sent to upstream services",
+    ["upstream", "operation"],
+)
+
+UPSTREAM_ERRORS = Counter(
+    "router_upstream_errors_total",
+    "Number of upstream errors grouped by upstream and operation",
+    ["upstream", "operation", "status"],
+)
+
+RATE_LIMIT_DROPS = Counter(
+    "router_rate_limit_drops_total",
+    "Requests rejected due to rate limiting",
+    ["api_key"],
+)
+
+RERANK_DOCUMENTS_COUNTER = Counter(
+    "router_rerank_documents_total",
+    "Number of documents processed through the router rerank endpoint",
+    ["model"],
+)

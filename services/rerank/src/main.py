@@ -160,7 +160,7 @@ def create_app(model_loader: Callable[[ServiceSettings], RerankModel] | None = N
         top_k = payload.top_k or len(payload.documents)
         top_k = min(top_k, len(payload.documents))
         results = rerank_documents(model, payload.query, payload.documents, top_k)
-        DOCUMENT_COUNTER.inc(len(payload.documents))
+        DOCUMENT_COUNTER.labels(model=payload.model).inc(len(payload.documents))
         return {"object": "rerank", "model": payload.model, "results": results}
 
     return app

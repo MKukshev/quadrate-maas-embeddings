@@ -34,12 +34,18 @@ for model in "${models[@]}"; do
   call_embedding "${model}"
 done
 
-echo "==> Rerank smoke check"
+echo "==> Rerank smoke check with 20 documents"
+docs=()
+for i in $(seq 1 20); do
+  docs+=("\"doc${i}\"")
+done
+docs_joined=$(IFS=,; echo "${docs[*]}")
+
 curl -sf \
   -H "X-API-Key: ${ROUTER_API_KEY}" \
   -H "Content-Type: application/json" \
   -X POST \
-  -d '{"model":"rerank-base","query":"test","documents":["doc1","doc2"],"top_k":2}' \
+  -d "{\"model\":\"rerank-base\",\"query\":\"test\",\"documents\":[${docs_joined}],\"top_k\":5}" \
   "${ROUTER_URL}/v1/rerank" | pretty_print
 
 echo "Smoke tests completed successfully."
