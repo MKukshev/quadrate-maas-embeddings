@@ -1,6 +1,9 @@
 default:
   capacity: 60
   refill_rate: 30
+anonymous:
+  capacity: 30
+  refill_rate: 15
 per_api_key:
   admin-key:
     capacity: 120

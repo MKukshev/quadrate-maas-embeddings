@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Dict
 
@@ -8,6 +9,8 @@ from fastapi import HTTPException, status
 
 from .metrics import RATE_LIMIT_DROPS
 from .settings import RateLimitConfig, RateLimitSettings
+
+logger = logging.getLogger(__name__)
 
 
 class TokenBucket:
@@ -45,17 +48,23 @@ class RateLimiter:
         self._settings = settings
         self._buckets: Dict[str, TokenBucket] = {}
 
-    def _get_bucket(self, key: str) -> TokenBucket:
-        if key not in self._buckets:
-            config = self._settings.per_api_key.get(key, self._settings.default)
-            self._buckets[key] = TokenBucket(config)
-        return self._buckets[key]
+    def _get_bucket(self, api_key: str) -> TokenBucket:
+        key_label = api_key or "anonymous"
+        if key_label not in self._buckets:
+            if api_key:
+                config = self._settings.per_api_key.get(api_key, self._settings.default)
+            else:
+                config = self._settings.anonymous or self._settings.default
+            self._buckets[key_label] = TokenBucket(config)
+        return self._buckets[key_label]
 
     async def check(self, api_key: str) -> None:
-        bucket = self._get_bucket(api_key or "anonymous")
+        key = api_key or "anonymous"
+        bucket = self._get_bucket(api_key)
         wait_time = await bucket.consume()
         if wait_time > 0:
-            RATE_LIMIT_DROPS.labels(api_key=api_key or "anonymous").inc()
+            logger.warning("Rate limit exceeded for key='%s', retry after %.2fs", key, wait_time)
+            RATE_LIMIT_DROPS.labels(api_key=key).inc()
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=f"Rate limit exceeded, retry after {wait_time:.2f} seconds",

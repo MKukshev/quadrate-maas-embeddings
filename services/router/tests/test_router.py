@@ -24,6 +24,7 @@ def setup_configs(
     max_top_k: int = 5,
     served_name: str | None = None,
     rate_limits: dict | None = None,
+    allow_anonymous_without_api_keys: bool = False,
 ) -> dict[str, Path]:
     routing = {
         "embeddings": [
@@ -53,7 +54,7 @@ def setup_configs(
             }
         ],
     }
-    auth = {"api_keys": ["test-key"]}
+    auth = {"api_keys": ["test-key"], "allow_anonymous_without_api_keys": allow_anonymous_without_api_keys}
     rate_limits = rate_limits or {"default": {"capacity": 100, "refill_rate": 100}}
 
     routing_path = tmp_path / "routing.json"
@@ -387,3 +388,35 @@ def test_rate_limit_exceeded_returns_429_and_metric(httpx_mock, tmp_path: Path, 
 
         metrics = client.get("/metrics").text
         assert 'router_rate_limit_drops_total{api_key="test-key"}' in metrics
+
+
+def test_anonymous_mode_allowed_when_no_keys_and_rate_limited(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(
+        tmp_path,
+        rate_limits={"default": {"capacity": 1, "refill_rate": 1}, "anonymous": {"capacity": 1, "refill_rate": 100}},
+        allow_anonymous_without_api_keys=True,
+    )
+    with_env(monkeypatch, paths)
+
+    app = create_app()
+    with TestClient(app) as client:
+        first = client.post("/v1/embeddings", json={"model": "test-embedding", "input": "hello"})
+        assert first.status_code == 200
+
+        second = client.post("/v1/embeddings", json={"model": "test-embedding", "input": "again"})
+        assert second.status_code == 429
+        body = second.json()
+        assert "Rate limit" in body["error"]["message"]
+        metrics = client.get("/metrics").text
+        assert 'router_rate_limit_drops_total{api_key="anonymous"}' in metrics
+
+
+def test_anonymous_mode_disabled_without_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path, allow_anonymous_without_api_keys=False)
+    paths["auth"].write_text(json.dumps({"api_keys": [], "allow_anonymous_without_api_keys": False}))
+    with_env(monkeypatch, paths)
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post("/v1/embeddings", json={"model": "test-embedding", "input": "hello"})
+        assert response.status_code == 401
+        assert "anonymous" in response.json()["error"]["message"].lower()
