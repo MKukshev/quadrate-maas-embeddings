@@ -1,10 +1,18 @@
-"""Entry point stub for the rerank service."""
+"""Uvicorn entrypoint for the rerank service."""
+
+import uvicorn
 
 
 def main() -> None:
-    """Placeholder main function for rerank service."""
-    # TODO: Implement rerank service startup logic.
-    return None
+    """Launch the FastAPI rerank service."""
+
+    uvicorn.run(
+        "services.rerank.src.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=False,
+        factory=False,
+    )
 
 
 if __name__ == "__main__":
