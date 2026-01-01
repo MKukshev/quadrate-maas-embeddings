@@ -12,6 +12,10 @@ class AuthSettings(BaseModel):
     """API key configuration loaded from YAML."""
 
     api_keys: List[str] = Field(default_factory=list)
+    allow_anonymous_without_api_keys: bool = Field(
+        default=False,
+        description="Allow anonymous requests when no API keys are configured (still rate limited).",
+    )
 
 
 class RateLimitConfig(BaseModel):
@@ -26,6 +30,7 @@ class RateLimitSettings(BaseModel):
 
     default: RateLimitConfig = Field(default_factory=RateLimitConfig)
     per_api_key: dict[str, RateLimitConfig] = Field(default_factory=dict)
+    anonymous: RateLimitConfig | None = Field(default=None)
 
     @field_validator("per_api_key", mode="before")
     @classmethod
@@ -71,7 +76,8 @@ def _load_yaml(path: Path) -> dict:
 def load_auth_settings(path: Path) -> AuthSettings:
     raw = _load_yaml(path)
     api_keys = raw.get("api_keys", []) or []
-    return AuthSettings(api_keys=api_keys)
+    allow_anonymous_without_api_keys = bool(raw.get("allow_anonymous_without_api_keys", False))
+    return AuthSettings(api_keys=api_keys, allow_anonymous_without_api_keys=allow_anonymous_without_api_keys)
 
 
 def load_rate_limit_settings(path: Path) -> RateLimitSettings:
@@ -81,4 +87,6 @@ def load_rate_limit_settings(path: Path) -> RateLimitSettings:
     per_api_key: dict[str, RateLimitConfig] = {}
     for key, cfg in per_key_raw.items():
         per_api_key[key] = RateLimitConfig(**cfg) if isinstance(cfg, dict) else cfg  # type: ignore[arg-type]
-    return RateLimitSettings(default=default, per_api_key=per_api_key)
+    anonymous_cfg = raw.get("anonymous", None)
+    anonymous = RateLimitConfig(**anonymous_cfg) if isinstance(anonymous_cfg, dict) else None
+    return RateLimitSettings(default=default, per_api_key=per_api_key, anonymous=anonymous)
