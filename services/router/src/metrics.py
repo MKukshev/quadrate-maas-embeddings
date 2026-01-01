@@ -43,3 +43,9 @@ READINESS_PARTIAL_FAILURES = Counter(
     "Number of degraded readiness responses grouped by upstream",
     ["upstream"],
 )
+
+READINESS_DEGRADED_EVENTS = Counter(
+    "router_readiness_degraded_events_total",
+    "Number of degraded readiness responses grouped by failing upstream count",
+    ["failing_count"],
+)

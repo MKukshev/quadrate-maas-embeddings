@@ -12,11 +12,13 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
+from opentelemetry import trace
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field, field_validator
 
 from .auth import Authenticator
 from .metrics import (
+    READINESS_DEGRADED_EVENTS,
     READINESS_PARTIAL_FAILURES,
     RERANK_DOCUMENTS_COUNTER,
     REQUEST_COUNTER,
@@ -247,11 +249,27 @@ def create_app() -> FastAPI:
             failing = [upstream_config.url.host for upstream_config, ok in zip(required, results) if not ok]
             for upstream in failing:
                 READINESS_PARTIAL_FAILURES.labels(upstream=upstream).inc()
+            failing_count = len(failing)
+            READINESS_DEGRADED_EVENTS.labels(failing_count=str(failing_count)).inc()
+
             logger.warning(
-                "Readiness degraded for upstreams %s (request_id=%s)",
+                "Readiness degraded for upstreams %s (failing_count=%s, request_id=%s)",
                 ", ".join(failing),
+                failing_count,
                 getattr(request.state, "request_id", "unknown"),
+                extra={"event": "readiness_degraded", "failing_upstreams": failing, "failing_count": failing_count},
             )
+
+            span = trace.get_current_span()
+            if span and span.is_recording():
+                span.add_event(
+                    "router.readiness.degraded",
+                    {
+                        "failing_upstreams": ",".join(failing),
+                        "failing_count": failing_count,
+                        "request_id": getattr(request.state, "request_id", "unknown"),
+                    },
+                )
             return JSONResponse({"status": "degraded"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
         return JSONResponse({"status": "ok"})
 
