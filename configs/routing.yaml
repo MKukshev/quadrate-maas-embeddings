@@ -21,7 +21,7 @@ embeddings:
       url: "http://infinity-embed:7997"
       timeout_ms: 3000
   - model: "qwen-embedding"
-    enabled: false
+    enabled: false  # set QWEN3_ENABLED=true to toggle on
     upstream:
       type: "qwen3"
       url: "http://qwen3-embed:9003"

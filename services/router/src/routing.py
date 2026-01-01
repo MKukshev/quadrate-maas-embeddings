@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -114,4 +115,15 @@ def load_routing_config(path: Path) -> RoutingConfig:
         route = RerankRoute.model_validate(item)
         rerank_entries[route.model] = route
 
-    return RoutingConfig(embeddings=embeddings, rerank=rerank_entries)
+    routing = RoutingConfig(embeddings=embeddings, rerank=rerank_entries)
+    qwen3_enabled = os.getenv("QWEN3_ENABLED")
+    qwen3_api_key = os.getenv("QWEN3_API_KEY")
+    if qwen3_enabled is not None or qwen3_api_key is not None:
+        for route in routing.embeddings.values():
+            if route.upstream.type == UpstreamType.QWEN3:
+                if qwen3_enabled is not None:
+                    route.enabled = qwen3_enabled.lower() in {"1", "true", "yes", "on"}
+                if qwen3_api_key:
+                    route.upstream.api_key = qwen3_api_key
+
+    return routing
