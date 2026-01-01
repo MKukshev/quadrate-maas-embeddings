@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from opentelemetry import trace
 
 from services.router.src.main import create_app
 from services.router.src.routing import UpstreamConfig, load_routing_config
@@ -278,6 +279,18 @@ def test_upstream_model_mismatch_returns_400(httpx_mock, tmp_path: Path, monkeyp
 def test_partial_readiness_logged_and_metered(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog):
     paths = setup_configs(tmp_path)
     with_env(monkeypatch, paths)
+    recorded_span_events = []
+
+    class DummySpan:
+        def is_recording(self):
+            return True
+
+        def add_event(self, name: str, attributes: dict | None = None):
+            recorded_span_events.append((name, attributes or {}))
+
+    dummy_span = DummySpan()
+    monkeypatch.setattr(trace, "get_current_span", lambda: dummy_span)
+
     app = create_app()
     with TestClient(app) as client:
         http_client = client.app.state.state.http_client
@@ -297,6 +310,11 @@ def test_partial_readiness_logged_and_metered(tmp_path: Path, monkeypatch: pytes
 
         metrics = client.get("/metrics").text
         assert 'router_readiness_degraded_total{upstream="rerank-upstream"}' in metrics
+        assert 'router_readiness_degraded_events_total{failing_count="1"}' in metrics
+        assert (
+            "router.readiness.degraded",
+            {"failing_upstreams": "rerank-upstream", "failing_count": 1, "request_id": response.headers["X-Request-Id"]},
+        ) in recorded_span_events
 
 
 def test_top_k_above_document_count_clipped(httpx_mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
