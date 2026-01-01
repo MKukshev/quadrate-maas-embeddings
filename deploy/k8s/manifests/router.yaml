@@ -1,0 +1,149 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: router-config
+  namespace: default
+data:
+  routing.yaml: |
+    embeddings:
+      - model: "bge-m3"
+        served_name: "BAAI/bge-m3"
+        enabled: true
+        upstream:
+          type: "infinity"
+          url: "http://infinity-embed:7997"
+          timeout_ms: 3000
+      - model: "multilingual-e5-large"
+        served_name: "intfloat/multilingual-e5-large"
+        enabled: true
+        upstream:
+          type: "infinity"
+          url: "http://infinity-embed:7997"
+          timeout_ms: 3000
+      - model: "frida"
+        served_name: "ai-forever/FRIDA"
+        enabled: true
+        upstream:
+          type: "infinity"
+          url: "http://infinity-embed:7997"
+          timeout_ms: 3000
+      - model: "qwen-embedding"
+        enabled: false
+        upstream:
+          type: "qwen3"
+          url: "http://qwen3-embed:9003"
+          api_key: "qwen3-key"
+          timeout_seconds: 10
+    rerank:
+      - model: "rerank-base"
+        enabled: true
+        max_top_k: 50
+        upstream:
+          type: "rerank"
+          url: "http://rerank:9002"
+          api_key: "rerank-key"
+          timeout_seconds: 10
+  auth.yaml: |
+    api_keys:
+      - "test-key"
+      - "admin-key"
+  rate_limits.yaml: |
+    default:
+      capacity: 60
+      refill_rate: 30
+    per_api_key:
+      admin-key:
+        capacity: 120
+        refill_rate: 60
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: router-api-keys
+  namespace: default
+type: Opaque
+data:
+  qwen3ApiKey: ""
+  rerankApiKey: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: router
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: router
+  template:
+    metadata:
+      labels:
+        app: router
+    spec:
+      containers:
+        - name: router
+          image: ghcr.io/quadrate/maas-router:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ROUTER_ROUTING_PATH
+              value: /app/configs/routing.yaml
+            - name: ROUTER_AUTH_PATH
+              value: /app/configs/auth.yaml
+            - name: ROUTER_RATE_LIMITS_PATH
+              value: /app/configs/rate_limits.yaml
+            - name: QWEN3_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: router-api-keys
+                  key: qwen3ApiKey
+          ports:
+            - name: http
+              containerPort: 8000
+          volumeMounts:
+            - name: config
+              mountPath: /app/configs
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+      volumes:
+        - name: config
+          configMap:
+            name: router-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: router
+  namespace: default
+spec:
+  selector:
+    app: router
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: router
+  namespace: default
+spec:
+  rules:
+    - host: router.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: router
+                port:
+                  number: 8000

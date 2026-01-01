@@ -1,0 +1,58 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rerank
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rerank
+  template:
+    metadata:
+      labels:
+        app: rerank
+    spec:
+      containers:
+        - name: rerank
+          image: ghcr.io/quadrate/maas-rerank:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RERANK_MODEL_NAME
+              value: "cross-encoder/ms-marco-MiniLM-L-2-v2"
+            - name: RERANK_MAX_DOCUMENTS
+              value: "50"
+            - name: RERANK_MAX_DOCUMENT_LENGTH
+              value: "4096"
+          ports:
+            - name: http
+              containerPort: 9002
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "4Gi"
+            limits:
+              cpu: "2000m"
+              memory: "8Gi"
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rerank
+  namespace: default
+spec:
+  selector:
+    app: rerank
+  ports:
+    - name: http
+      port: 9002
+      targetPort: 9002

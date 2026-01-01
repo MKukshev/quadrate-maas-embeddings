@@ -1,0 +1,70 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infinity-embed
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: infinity-embed
+  template:
+    metadata:
+      labels:
+        app: infinity-embed
+      annotations:
+        nvidia.com/mig.strategy: single
+    spec:
+      containers:
+        - name: infinity-embed
+          image: infini-ai/infinity-emb:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "7997"
+            - "--model-id"
+            - "BAAI/bge-m3"
+            - "--served-name"
+            - "BAAI/bge-m3"
+            - "--model-id"
+            - "intfloat/multilingual-e5-large"
+            - "--served-name"
+            - "intfloat/multilingual-e5-large"
+            - "--model-id"
+            - "ai-forever/FRIDA"
+            - "--served-name"
+            - "ai-forever/FRIDA"
+          ports:
+            - name: http
+              containerPort: 7997
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "8Gi"
+            limits:
+              nvidia.com/gpu: 1
+              memory: "16Gi"
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: infinity-embed
+  namespace: default
+spec:
+  selector:
+    app: infinity-embed
+  ports:
+    - name: http
+      port: 7997
+      targetPort: 7997

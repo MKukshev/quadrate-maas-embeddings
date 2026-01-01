@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "router.fullname" . }}-config
+  labels:
+    app.kubernetes.io/name: {{ include "router.name" . }}
+    helm.sh/chart: {{ include "router.chart" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  routing.yaml: |
+{{ toYaml .Values.config.routing | indent 4 }}
+  auth.yaml: |
+{{ toYaml .Values.config.auth | indent 4 }}
+  rate_limits.yaml: |
+{{ toYaml .Values.config.rateLimits | indent 4 }}
