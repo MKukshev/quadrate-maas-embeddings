@@ -91,6 +91,15 @@ def error_response(message: str, status_code: int, code: str | None = None) -> J
     return JSONResponse(content=body, status_code=status_code)
 
 
+def ensure_response_model_matches(result: dict, requested_model: str) -> None:
+    response_model = result.get("model") if isinstance(result, dict) else None
+    if response_model and response_model != requested_model:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Upstream model '{response_model}' does not match requested model '{requested_model}'",
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = AppSettings()
@@ -286,6 +295,7 @@ def create_app() -> FastAPI:
         except httpx.RequestError as exc:
             UPSTREAM_ERRORS.labels(upstream=route.upstream.url.host, operation="embeddings", status="request_error").inc()
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        ensure_response_model_matches(result, payload.model)
         return result
 
     @app.post("/v1/rerank")
@@ -354,6 +364,7 @@ def create_app() -> FastAPI:
             UPSTREAM_ERRORS.labels(upstream=route.upstream.url.host, operation="rerank", status="request_error").inc()
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         RERANK_DOCUMENTS_COUNTER.labels(model=payload.model).inc(len(payload.documents))
+        ensure_response_model_matches(result, payload.model)
         return result
 
     return app

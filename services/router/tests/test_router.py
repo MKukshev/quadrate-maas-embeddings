@@ -23,6 +23,7 @@ def setup_configs(
     enabled: bool = True,
     max_top_k: int = 5,
     served_name: str | None = None,
+    rate_limits: dict | None = None,
 ) -> dict[str, Path]:
     routing = {
         "embeddings": [
@@ -53,7 +54,7 @@ def setup_configs(
         ],
     }
     auth = {"api_keys": ["test-key"]}
-    rate_limits = {"default": {"capacity": 100, "refill_rate": 100}}
+    rate_limits = rate_limits or {"default": {"capacity": 100, "refill_rate": 100}}
 
     routing_path = tmp_path / "routing.json"
     auth_path = tmp_path / "auth.json"
@@ -246,6 +247,29 @@ def test_metrics_and_request_id_on_validation_error(tmp_path: Path, monkeypatch:
         assert 'router_requests_total{endpoint="/v1/embeddings",method="POST",status="400"}' in metrics
 
 
+def test_upstream_model_mismatch_returns_400(httpx_mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path)
+    with_env(monkeypatch, paths)
+
+    httpx_mock.add_response(
+        method="POST",
+        url="http://embed-upstream/v1/embeddings",
+        json={"model": "other-model", "data": [{"embedding": [1, 2, 3]}]},
+    )
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "test-embedding", "input": "hello"},
+            headers={"X-API-Key": "test-key"},
+        )
+
+    assert response.status_code == 400
+    assert "does not match requested model" in response.json()["error"]["message"]
+    assert response.headers.get("X-Request-Id")
+
+
 def test_partial_readiness_logged_and_metered(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog):
     paths = setup_configs(tmp_path)
     with_env(monkeypatch, paths)
@@ -268,3 +292,98 @@ def test_partial_readiness_logged_and_metered(tmp_path: Path, monkeypatch: pytes
 
         metrics = client.get("/metrics").text
         assert 'router_readiness_degraded_total{upstream="rerank-upstream"}' in metrics
+
+
+def test_top_k_above_document_count_clipped(httpx_mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path, max_top_k=10)
+    with_env(monkeypatch, paths)
+    captured = {}
+
+    def _callback(request: httpx.Request):
+        captured["payload"] = request.json()
+        return httpx.Response(200, json={"data": [{"relevance_score": 0.9, "document": "a"}]})
+
+    httpx_mock.add_callback(_callback, method="POST", url="http://rerank-upstream/v1/rerank")
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/rerank",
+            json={"model": "test-rerank", "query": "q", "documents": ["a", "b"], "top_k": 5},
+            headers={"X-API-Key": "test-key"},
+        )
+
+    assert response.status_code == 200
+    assert captured["payload"]["top_k"] == 2
+
+
+def test_safe_limit_exceeded_rerank_returns_400(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path)
+    with_env(monkeypatch, paths)
+    monkeypatch.setenv("ROUTER_SAFE_REQUEST_TOKEN_LIMIT", "2")
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/rerank",
+            json={"model": "test-rerank", "query": "too many tokens", "documents": ["a", "b"]},
+            headers={"X-API-Key": "test-key"},
+        )
+
+    assert response.status_code == 400
+    assert "exceeds safe limit" in response.json()["error"]["message"]
+
+
+def test_upstream_error_returns_status_and_records_metric(httpx_mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path)
+    with_env(monkeypatch, paths)
+    httpx_mock.add_response(
+        method="POST",
+        url="http://embed-upstream/v1/embeddings",
+        status_code=502,
+        json={"error": "bad gateway"},
+    )
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "test-embedding", "input": "hello"},
+            headers={"X-API-Key": "test-key"},
+        )
+        assert response.status_code == 502
+        assert response.headers.get("X-Request-Id")
+
+        metrics = client.get("/metrics").text
+        assert 'router_upstream_errors_total{operation="embeddings",status="502",upstream="embed-upstream"}' in metrics
+
+
+def test_rate_limit_exceeded_returns_429_and_metric(httpx_mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path, rate_limits={"default": {"capacity": 1, "refill_rate": 1}})
+    with_env(monkeypatch, paths)
+
+    httpx_mock.add_response(
+        method="POST",
+        url="http://embed-upstream/v1/embeddings",
+        json={"data": [{"embedding": [0.1]}]},
+    )
+
+    app = create_app()
+    with TestClient(app) as client:
+        first = client.post(
+            "/v1/embeddings",
+            json={"model": "test-embedding", "input": "hello"},
+            headers={"X-API-Key": "test-key"},
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            "/v1/embeddings",
+            json={"model": "test-embedding", "input": "hello again"},
+            headers={"X-API-Key": "test-key"},
+        )
+        assert second.status_code == 429
+        assert "Rate limit exceeded" in second.json()["error"]["message"]
+
+        metrics = client.get("/metrics").text
+        assert 'router_rate_limit_drops_total{api_key="test-key"}' in metrics
