@@ -25,9 +25,10 @@ uvicorn services.rerank.src.main:app --host 0.0.0.0 --port 9002
   - `router_requests_total`, `router_request_latency_seconds`
   - `router_upstream_latency_seconds`, `router_upstream_errors_total`
   - `router_rate_limit_drops_total`, `router_rerank_documents_total`
+  - `router_readiness_degraded_total`
 - Rerank:
   - `rerank_requests_total`, `rerank_request_latency_seconds`
-  - `rerank_documents_total`, `rerank_errors_total`
+  - `rerank_documents_total`, `rerank_errors_total` (labels include `upstream` and `error_type`)
 
 ## Smoke-тест
 

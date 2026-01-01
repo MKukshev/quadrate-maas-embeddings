@@ -164,16 +164,39 @@ def create_app(model_loader: Callable[[ServiceSettings], RerankModel] | None = N
     )
     app = FastAPI(title="Rerank Service", lifespan=lambda app: lifespan(app, loader))
 
+    def _get_upstream_label(request: Request) -> str:
+        return request.headers.get("X-Upstream-Id") or (request.client.host if request.client else "unknown")
+
+    def _record_error(request: Request, error_type: str) -> None:
+        ERROR_COUNTER.labels(endpoint=request.url.path, upstream=_get_upstream_label(request), error_type=error_type).inc()
+        request.state.error_recorded = True
+
     @app.middleware("http")
     async def request_metrics_middleware(request: Request, call_next):
         request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
         request.state.request_id = request_id
         timer = REQUEST_LATENCY.labels(endpoint=request.url.path, method=request.method).time()
+        response: Response
+        error_type = None
         try:
             response = await call_next(request)
+        except HTTPException as exc:
+            error_type = f"http_{exc.status_code}"
+            response = await http_exception_handler(request, exc)
+        except RequestValidationError as exc:
+            error_type = "validation_error"
+            response = await request_validation_exception_handler(request, exc)
+        except Exception as exc:  # pragma: no cover - defensive path
+            error_type = "unhandled_exception"
+            logger.exception(
+                "Unhandled exception for %s %s (request_id=%s)", request.method, request.url.path, request_id, exc_info=exc
+            )
+            response = error_response("Internal Server Error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         finally:
             timer.observe_duration()
         response.headers["X-Request-Id"] = request_id
+        if error_type and not getattr(request.state, "error_recorded", False):
+            _record_error(request, error_type)
         REQUEST_COUNTER.labels(
             endpoint=request.url.path, method=request.method, status=str(response.status_code)
         ).inc()
@@ -186,6 +209,14 @@ def create_app(model_loader: Callable[[ServiceSettings], RerankModel] | None = N
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+        _record_error(request, "validation_error")
+        logger.warning(
+            "Validation error for %s %s (request_id=%s): %s",
+            request.method,
+            request.url.path,
+            request_id := getattr(request.state, "request_id", "unknown"),
+            exc,
+        )
         return error_response(str(exc), status_code=status.HTTP_400_BAD_REQUEST)
 
     def get_state(request: Request) -> ApplicationState:
@@ -217,15 +248,20 @@ def create_app(model_loader: Callable[[ServiceSettings], RerankModel] | None = N
     @app.post("/v1/rerank")
     async def rerank_endpoint(
         payload: RerankRequest,
+        request: Request,
         model: RerankModel = Depends(get_model),
         batcher: RerankBatcher = Depends(get_batcher),
         settings: ServiceSettings = Depends(get_settings),
     ):
         canonical_model = settings.resolve_model(payload.model)
         if canonical_model is None:
-            ERROR_COUNTER.labels(endpoint="/v1/rerank", reason="invalid_model").inc()
+            _record_error(request, "invalid_model")
             allowed_models = ", ".join(sorted({settings.model_name, *settings.model_mapping.keys()}))
-            logger.warning("Unsupported rerank model requested: %s", payload.model)
+            logger.warning(
+                "Unsupported rerank model requested: %s (request_id=%s)",
+                payload.model,
+                request.state.request_id,
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Unsupported model '{payload.model}'. Allowed models: {allowed_models}",
@@ -253,13 +289,13 @@ def create_app(model_loader: Callable[[ServiceSettings], RerankModel] | None = N
         try:
             results = await rerank_documents(batcher.score, payload.query, payload.documents, top_k)
         except asyncio.TimeoutError:
-            ERROR_COUNTER.labels(endpoint="/v1/rerank", reason="timeout").inc()
+            _record_error(request, "timeout")
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Rerank request timed out while in queue"
             )
         except Exception as exc:
-            logger.exception("Rerank inference failed: %s", exc)
-            ERROR_COUNTER.labels(endpoint="/v1/rerank", reason="inference_error").inc()
+            logger.exception("Rerank inference failed (request_id=%s): %s", request.state.request_id, exc)
+            _record_error(request, "inference_error")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Inference failed")
         DOCUMENT_COUNTER.labels(model=canonical_model).inc(len(payload.documents))
         return {"object": "rerank", "model": canonical_model, "results": results}
