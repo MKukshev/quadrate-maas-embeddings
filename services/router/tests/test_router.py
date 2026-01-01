@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -228,3 +230,41 @@ def test_document_truncation_by_tokens(httpx_mock, tmp_path: Path, monkeypatch: 
 def test_timeout_ms_precedence():
     cfg = UpstreamConfig(type="infinity", url="http://example.com", timeout_ms=1500, timeout_seconds=10)
     assert cfg.get_timeout(default_timeout=30) == 1.5
+
+
+def test_metrics_and_request_id_on_validation_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path)
+    with_env(monkeypatch, paths)
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post("/v1/embeddings", json={}, headers={"X-API-Key": "test-key"})
+        assert response.status_code == 400
+        assert response.headers.get("X-Request-Id")
+
+        metrics = client.get("/metrics").text
+        assert 'router_requests_total{endpoint="/v1/embeddings",method="POST",status="400"}' in metrics
+
+
+def test_partial_readiness_logged_and_metered(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog):
+    paths = setup_configs(tmp_path)
+    with_env(monkeypatch, paths)
+    app = create_app()
+    with TestClient(app) as client:
+        http_client = client.app.state.state.http_client
+
+        async def fake_get(url: str, timeout=None):
+            status_code = 503 if "rerank-upstream" in url else 200
+            return httpx.Response(status_code=status_code, request=httpx.Request("GET", url))
+
+        http_client.get = AsyncMock(side_effect=fake_get)
+
+        with caplog.at_level(logging.WARNING):
+            response = client.get("/health/ready")
+
+        assert response.status_code == 503
+        assert response.headers.get("X-Request-Id")
+        assert any("rerank-upstream" in record.message for record in caplog.records)
+
+        metrics = client.get("/metrics").text
+        assert 'router_readiness_degraded_total{upstream="rerank-upstream"}' in metrics

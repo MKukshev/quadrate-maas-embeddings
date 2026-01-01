@@ -113,3 +113,17 @@ def test_unknown_model(monkeypatch: pytest.MonkeyPatch):
     )
     assert response.status_code == 400
     assert "Unsupported model" in response.json()["error"]["message"]
+
+
+def test_metrics_and_request_id_on_validation_error(monkeypatch: pytest.MonkeyPatch):
+    client = override_app(FakeModel())
+    response = client.post(
+        "/v1/rerank",
+        json={"model": "demo-model", "documents": ["missing-query"]},
+    )
+    assert response.status_code == 400
+    assert response.headers.get("X-Request-Id")
+
+    metrics = client.get("/metrics").text
+    assert 'rerank_requests_total{endpoint="/v1/rerank",method="POST",status="400"}' in metrics
+    assert 'error_type="validation_error"' in metrics

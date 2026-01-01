@@ -37,3 +37,9 @@ RERANK_DOCUMENTS_COUNTER = Counter(
     "Number of documents processed through the router rerank endpoint",
     ["model"],
 )
+
+READINESS_PARTIAL_FAILURES = Counter(
+    "router_readiness_degraded_total",
+    "Number of degraded readiness responses grouped by upstream",
+    ["upstream"],
+)

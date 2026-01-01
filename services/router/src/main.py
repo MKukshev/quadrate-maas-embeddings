@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .auth import Authenticator
 from .metrics import (
+    READINESS_PARTIAL_FAILURES,
     RERANK_DOCUMENTS_COUNTER,
     REQUEST_COUNTER,
     REQUEST_LATENCY,
@@ -26,6 +28,8 @@ from .routing import RoutingConfig, UpstreamType, load_routing_config
 from .settings import AppSettings, AuthSettings, RateLimitSettings, load_auth_settings, load_rate_limit_settings
 from .tokenization import TokenizerProvider, count_text_tokens, truncate_text_to_tokens
 from .upstream import infinity, qwen3, rerank
+
+logger = logging.getLogger(__name__)
 
 
 class ErrorContent(BaseModel):
@@ -122,8 +126,18 @@ def create_app() -> FastAPI:
         request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
         request.state.request_id = request_id
         timer = REQUEST_LATENCY.labels(endpoint=request.url.path, method=request.method).time()
+        response: Response
         try:
             response = await call_next(request)
+        except HTTPException as exc:
+            response = await http_exception_handler(request, exc)
+        except RequestValidationError as exc:
+            response = await request_validation_exception_handler(request, exc)
+        except Exception as exc:  # pragma: no cover - defensive path
+            logger.exception(
+                "Unhandled exception for %s %s (request_id=%s)", request.method, request.url.path, request_id, exc_info=exc
+            )
+            response = error_response("Internal Server Error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         finally:
             timer.observe_duration()
         response.headers["X-Request-Id"] = request_id
@@ -136,6 +150,13 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+        logger.warning(
+            "Validation error for %s %s (request_id=%s): %s",
+            request.method,
+            request.url.path,
+            getattr(request.state, "request_id", "unknown"),
+            exc,
+        )
         return error_response(str(exc), status_code=status.HTTP_400_BAD_REQUEST)
 
     def get_state(request: Request) -> ApplicationState:
@@ -168,7 +189,7 @@ def create_app() -> FastAPI:
             return False
 
     @app.get("/health/ready")
-    async def ready(state: ApplicationState = Depends(get_state)) -> Response:
+    async def ready(request: Request, state: ApplicationState = Depends(get_state)) -> Response:
         routing = state.routing
         required = [route.upstream for route in routing.embeddings.values() if route.enabled]
         required += [route.upstream for route in routing.rerank.values() if route.enabled]
@@ -180,6 +201,14 @@ def create_app() -> FastAPI:
             checks.append(_check_upstream(state.http_client, str(upstream_config.url)))
         results = await asyncio.gather(*checks)
         if not all(results):
+            failing = [upstream_config.url.host for upstream_config, ok in zip(required, results) if not ok]
+            for upstream in failing:
+                READINESS_PARTIAL_FAILURES.labels(upstream=upstream).inc()
+            logger.warning(
+                "Readiness degraded for upstreams %s (request_id=%s)",
+                ", ".join(failing),
+                getattr(request.state, "request_id", "unknown"),
+            )
             return JSONResponse({"status": "degraded"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
         return JSONResponse({"status": "ok"})
 
