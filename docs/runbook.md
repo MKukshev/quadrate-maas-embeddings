@@ -48,3 +48,20 @@ ROUTER_URL=http://localhost:8000 ROUTER_API_KEY=test-key bash scripts/smoke_test
 ```bash
 ROUTER_URL=http://localhost:8000 ROUTER_API_KEY=test-key k6 run scripts/bench/k6.js
 ```
+
+## Проверки
+
+### Локально (CPU, заглушки)
+- Роутер: в корне `services/router` выполнить `pytest` — используется httpx mock для проверки прокси и валидации.
+- Rerank: в `services/rerank` выполнить `pytest` — проверяются ограничения по документам и сортировка.
+- Smoke: поднять Router и Rerank локально (см. выше) и запустить `ROUTER_URL=http://localhost:8000 ROUTER_API_KEY=test-key bash scripts/smoke_test.sh`.
+
+### Удалённый GPU стенд
+- Поднять стенд с infinity: `docker compose -f deploy/compose/docker-compose.yml up -d`.
+- Для подключения Qwen3 добавить оверлей: `docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.qwen3.yml up -d` и выставить `QWEN3_API_KEY`/`QWEN3_MODEL_ID` при необходимости.
+- Проверки на стенде: выполнить smoke (`ROUTER_URL=http://<host>:8080 ROUTER_API_KEY=<key> bash scripts/smoke_test.sh`) и нагрузочный тест (`ROUTER_URL=http://<host>:8080 ROUTER_API_KEY=<key> k6 run scripts/bench/k6.js`).
+
+## Rollback / Known issues
+- Базовый rollback: вернуть конфиги `configs/*.yaml` к последней стабильной версии (git checkout или копия из бэкапа) и перезапустить сервисы через `docker compose restart` либо `systemctl restart` для отдельных юнитов.
+- Таймауты upstream. Значения настраиваются в `configs/routing.yaml` (`timeout_ms`/`timeout_seconds`), после изменения — перезапуск соответствующего сервиса/compose. При частых 504 увеличить таймаут или сузить размер запросов.
+- Ограничения rate limit. Конфигурация в `configs/rate_limits.yaml`; при получении 429 можно временно поднять `capacity`/`refill_rate` или добавить отдельные лимиты для ключей в `per_api_key`, затем перезапустить Router.
