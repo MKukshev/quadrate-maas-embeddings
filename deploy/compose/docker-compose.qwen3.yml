@@ -1,0 +1,9 @@
+version: "3.9"
+
+services:
+  router:
+    image: your-registry/router:qwen3
+    restart: unless-stopped
+  rerank:
+    image: your-registry/rerank:qwen3
+    restart: unless-stopped
