@@ -1,16 +1,30 @@
 embeddings:
-  - model: "infinity-embedding"
+  - model: "bge-m3"
+    served_name: "BAAI/bge-m3"
     enabled: true
     upstream:
       type: "infinity"
-      url: "http://localhost:9001"
-      api_key: "infinity-key"
-      timeout_seconds: 10
-  - model: "qwen-embedding"
+      url: "http://infinity-embed:7997"
+      timeout_ms: 3000
+  - model: "multilingual-e5-large"
+    served_name: "intfloat/multilingual-e5-large"
     enabled: true
     upstream:
+      type: "infinity"
+      url: "http://infinity-embed:7997"
+      timeout_ms: 3000
+  - model: "frida"
+    served_name: "ai-forever/FRIDA"
+    enabled: true
+    upstream:
+      type: "infinity"
+      url: "http://infinity-embed:7997"
+      timeout_ms: 3000
+  - model: "qwen-embedding"
+    enabled: false
+    upstream:
       type: "qwen3"
-      url: "http://localhost:9003"
+      url: "http://qwen3-embed:9003"
       api_key: "qwen3-key"
       timeout_seconds: 10
 
@@ -20,6 +34,6 @@ rerank:
     max_top_k: 50
     upstream:
       type: "rerank"
-      url: "http://localhost:9002"
+      url: "http://rerank:9002"
       api_key: "rerank-key"
       timeout_seconds: 10

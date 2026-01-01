@@ -10,6 +10,7 @@ async def embeddings(
     config: UpstreamConfig,
     payload: dict,
     request_id: str,
+    served_model: str | None = None,
 ) -> dict:
     """Proxy embeddings request to Infinity upstream."""
 
@@ -17,11 +18,16 @@ async def embeddings(
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
 
+    upstream_payload = {
+        **payload,
+        "model": served_model or payload.get("model"),
+    }
+
     response = await client.post(
         f"{config.url}/v1/embeddings",
-        json=payload,
+        json=upstream_payload,
         headers=headers,
-        timeout=config.timeout_seconds or client.timeout,
+        timeout=config.get_timeout(client.timeout),
     )
     response.raise_for_status()
     data = response.json()

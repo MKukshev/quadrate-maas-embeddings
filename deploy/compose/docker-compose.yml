@@ -2,8 +2,44 @@ version: "3.9"
 
 services:
   router:
-    image: your-registry/router:latest
-    restart: unless-stopped
+    build:
+      context: ../..
+      dockerfile: services/router/Dockerfile
+    depends_on:
+      - infinity-embed
+      - rerank
+    environment:
+      ROUTER_ROUTING_PATH: /app/configs/routing.yaml
+      ROUTER_AUTH_PATH: /app/configs/auth.yaml
+      ROUTER_RATE_LIMITS_PATH: /app/configs/rate_limits.yaml
+    ports:
+      - "8000:8000"
+
+  infinity-embed:
+    image: infini-ai/infinity-emb:latest
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "7997"
+      - "--model-id"
+      - "BAAI/bge-m3"
+      - "--served-name"
+      - "BAAI/bge-m3"
+      - "--model-id"
+      - "intfloat/multilingual-e5-large"
+      - "--served-name"
+      - "intfloat/multilingual-e5-large"
+      - "--model-id"
+      - "ai-forever/FRIDA"
+      - "--served-name"
+      - "ai-forever/FRIDA"
+    ports:
+      - "7997:7997"
+
   rerank:
-    image: your-registry/rerank:latest
-    restart: unless-stopped
+    build:
+      context: ../..
+      dockerfile: services/rerank/Dockerfile
+    ports:
+      - "9002:9002"
