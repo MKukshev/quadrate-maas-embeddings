@@ -201,7 +201,14 @@ def create_app() -> FastAPI:
         upstream_payload = {"input": payload.input, "model": payload.model}
         try:
             if route.upstream.type == UpstreamType.INFINITY:
-                result = await infinity.embeddings(state.http_client, route.upstream, upstream_payload, request_id)
+                served_name = getattr(route, "served_name", None)
+                result = await infinity.embeddings(
+                    state.http_client,
+                    route.upstream,
+                    upstream_payload,
+                    request_id,
+                    served_model=served_name,
+                )
             elif route.upstream.type == UpstreamType.QWEN3:
                 result = await qwen3.embeddings(state.http_client, route.upstream, upstream_payload, request_id)
             else:

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROUTER_URL=${ROUTER_URL:-"http://localhost:8000"}
+ROUTER_API_KEY=${ROUTER_API_KEY:-"test-key"}
+
+models=("bge-m3" "multilingual-e5-large" "frida")
+
+JQ_BIN=$(command -v jq || true)
+
+pretty_print() {
+  if [[ -n "${JQ_BIN}" ]]; then
+    "${JQ_BIN}" .
+  else
+    cat
+  fi
+}
+
+echo "==> Checking router readiness at ${ROUTER_URL}"
+curl -sf "${ROUTER_URL}/health/ready" | pretty_print
+
+call_embedding() {
+  local model=$1
+  echo "==> Embeddings for model: ${model}"
+  curl -sf \
+    -H "X-API-Key: ${ROUTER_API_KEY}" \
+    -H "Content-Type: application/json" \
+    -X POST \
+    -d "{\"model\":\"${model}\",\"input\":\"hello from smoke test\"}" \
+    "${ROUTER_URL}/v1/embeddings" | pretty_print
+}
+
+for model in "${models[@]}"; do
+  call_embedding "${model}"
+done
+
+echo "==> Rerank smoke check"
+curl -sf \
+  -H "X-API-Key: ${ROUTER_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -X POST \
+  -d '{"model":"rerank-base","query":"test","documents":["doc1","doc2"],"top_k":2}' \
+  "${ROUTER_URL}/v1/rerank" | pretty_print
+
+echo "Smoke tests completed successfully."

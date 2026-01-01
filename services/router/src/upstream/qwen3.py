@@ -21,7 +21,7 @@ async def embeddings(
         f"{config.url}/v1/embeddings",
         json=payload,
         headers=headers,
-        timeout=config.timeout_seconds or client.timeout,
+        timeout=config.get_timeout(client.timeout),
     )
     response.raise_for_status()
     data = response.json()
@@ -29,7 +29,13 @@ async def embeddings(
     normalized = []
     for idx, item in enumerate(embeddings_data):
         vector = item.get("embedding") if isinstance(item, dict) else item
-        normalized.append({"object": "embedding", "embedding": vector, "index": item.get("index", idx) if isinstance(item, dict) else idx})
+        normalized.append(
+            {
+                "object": "embedding",
+                "embedding": vector,
+                "index": item.get("index", idx) if isinstance(item, dict) else idx,
+            }
+        )
 
     return {
         "object": "list",

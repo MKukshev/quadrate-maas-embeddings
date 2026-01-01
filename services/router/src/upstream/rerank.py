@@ -21,7 +21,7 @@ async def rerank(
         f"{config.url}/v1/rerank",
         json=payload,
         headers=headers,
-        timeout=config.timeout_seconds or client.timeout,
+        timeout=config.get_timeout(client.timeout),
     )
     response.raise_for_status()
     data = response.json()

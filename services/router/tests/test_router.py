@@ -3,23 +3,30 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from services.router.src.main import create_app
-from services.router.src.routing import load_routing_config
+from services.router.src.routing import UpstreamConfig, load_routing_config
 
 
 def write_yaml(path: Path, content: dict) -> None:
     path.write_text(json.dumps(content))
 
 
-def setup_configs(tmp_path: Path, enabled: bool = True, max_top_k: int = 5) -> dict[str, Path]:
+def setup_configs(
+    tmp_path: Path,
+    enabled: bool = True,
+    max_top_k: int = 5,
+    served_name: str | None = None,
+) -> dict[str, Path]:
     routing = {
         "embeddings": [
             {
                 "model": "test-embedding",
                 "enabled": enabled,
+                **({"served_name": served_name} if served_name else {}),
                 "upstream": {
                     "type": "infinity",
                     "url": "http://embed-upstream",
@@ -130,3 +137,31 @@ def test_successful_embedding_proxy(httpx_mock, tmp_path: Path, monkeypatch: pyt
     assert response.status_code == 200
     body = response.json()
     assert body["data"][0]["embedding"] == [0.1, 0.2, 0.3]
+
+
+def test_served_name_forwarded(httpx_mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path, served_name="upstream-model")
+    with_env(monkeypatch, paths)
+    captured = {}
+
+    def _callback(request: httpx.Request):
+        captured["payload"] = request.json()
+        return httpx.Response(200, json={"data": [{"embedding": [0.4, 0.5]}]})
+
+    httpx_mock.add_callback(_callback, method="POST", url="http://embed-upstream/v1/embeddings")
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "test-embedding", "input": "hello"},
+            headers={"X-API-Key": "test-key"},
+        )
+
+    assert response.status_code == 200
+    assert captured["payload"]["model"] == "upstream-model"
+
+
+def test_timeout_ms_precedence():
+    cfg = UpstreamConfig(type="infinity", url="http://example.com", timeout_ms=1500, timeout_seconds=10)
+    assert cfg.get_timeout(default_timeout=30) == 1.5

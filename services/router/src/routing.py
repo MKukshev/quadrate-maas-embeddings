@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import yaml
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import httpx
+import yaml
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
@@ -22,6 +23,7 @@ class UpstreamConfig(BaseModel):
     url: HttpUrl = Field(description="Base URL for upstream service")
     api_key: Optional[str] = None
     timeout_seconds: Optional[float] = Field(default=None, gt=0)
+    timeout_ms: Optional[int] = Field(default=None, alias="timeout_ms", gt=0)
 
     @field_validator("type")
     @classmethod
@@ -31,11 +33,21 @@ class UpstreamConfig(BaseModel):
             raise ValueError(f"Unsupported upstream type: {value}")
         return value
 
+    def get_timeout(self, default_timeout: float | httpx.Timeout | None = None) -> float | httpx.Timeout | None:
+        """Return httpx-compatible timeout value honoring ms or seconds config."""
+
+        if self.timeout_ms is not None:
+            return self.timeout_ms / 1000.0
+        if self.timeout_seconds is not None:
+            return self.timeout_seconds
+        return default_timeout
+
 
 class EmbeddingRoute(BaseModel):
     """Routing entry for embeddings."""
 
     model: str
+    served_name: Optional[str] = Field(default=None, description="Upstream served model name")
     enabled: bool = True
     upstream: UpstreamConfig
 
