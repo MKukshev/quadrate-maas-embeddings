@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from .model import RerankModel
+import inspect
+from typing import Awaitable, Callable
+
+ScoreProvider = Callable[[str, list[str]], Awaitable[list[float]] | list[float]]
 
 
-def rerank_documents(model: RerankModel, query: str, documents: list[str], top_k: int) -> list[dict]:
-    scores = model.score(query, documents)
+async def rerank_documents(score_provider: ScoreProvider, query: str, documents: list[str], top_k: int) -> list[dict]:
+    scores_or_awaitable = score_provider(query, documents)
+    scores = await scores_or_awaitable if inspect.isawaitable(scores_or_awaitable) else scores_or_awaitable
     scored = [
         {"index": idx, "document": document, "relevance_score": float(score)}
         for idx, (document, score) in enumerate(zip(documents, scores))
