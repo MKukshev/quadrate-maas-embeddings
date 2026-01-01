@@ -1,0 +1,54 @@
+replicaCount: 1
+
+image:
+  repository: registry.cn-hangzhou.aliyuncs.com/qwen-team/qwen-embedding
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 9003
+
+command:
+  - "--model-id"
+  - "Qwen/Qwen-Embedding-8B"
+  - "--port"
+  - "9003"
+
+resources:
+  requests:
+    cpu: "1000m"
+    memory: "12Gi"
+  limits:
+    nvidia.com/gpu: 1
+    memory: "24Gi"
+
+gpu:
+  enabled: false
+  resource: nvidia.com/gpu
+  count: 1
+  migProfile: ""
+  annotations: {}
+
+env:
+  apiKey: ""
+
+livenessProbe:
+  path: /health/live
+  initialDelaySeconds: 20
+  periodSeconds: 20
+  timeoutSeconds: 5
+
+readinessProbe:
+  path: /health/ready
+  initialDelaySeconds: 20
+  periodSeconds: 20
+  timeoutSeconds: 5
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+podAnnotations: {}

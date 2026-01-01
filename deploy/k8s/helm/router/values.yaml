@@ -1,0 +1,109 @@
+image:
+  repository: ghcr.io/quadrate/maas-router
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+  hosts:
+    - host: router.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+podAnnotations: {}
+
+livenessProbe:
+  path: /health/live
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 2
+
+readinessProbe:
+  path: /health/ready
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 2
+
+env:
+  qwen3Enabled: false
+  requestTimeoutSeconds: 30
+
+config:
+  routing:
+    embeddings:
+      - model: "bge-m3"
+        served_name: "BAAI/bge-m3"
+        enabled: true
+        upstream:
+          type: "infinity"
+          url: "http://infinity-embed:7997"
+          timeout_ms: 3000
+      - model: "multilingual-e5-large"
+        served_name: "intfloat/multilingual-e5-large"
+        enabled: true
+        upstream:
+          type: "infinity"
+          url: "http://infinity-embed:7997"
+          timeout_ms: 3000
+      - model: "frida"
+        served_name: "ai-forever/FRIDA"
+        enabled: true
+        upstream:
+          type: "infinity"
+          url: "http://infinity-embed:7997"
+          timeout_ms: 3000
+      - model: "qwen-embedding"
+        enabled: false
+        upstream:
+          type: "qwen3"
+          url: "http://qwen3-embed:9003"
+          api_key: "qwen3-key"
+          timeout_seconds: 10
+    rerank:
+      - model: "rerank-base"
+        enabled: true
+        max_top_k: 50
+        upstream:
+          type: "rerank"
+          url: "http://rerank:9002"
+          api_key: "rerank-key"
+          timeout_seconds: 10
+  auth:
+    api_keys:
+      - "test-key"
+      - "admin-key"
+  rateLimits:
+    default:
+      capacity: 60
+      refill_rate: 30
+    per_api_key:
+      admin-key:
+        capacity: 120
+        refill_rate: 60
+
+secrets:
+  qwen3ApiKey: ""
+  rerankApiKey: ""
+
+serviceAccount:
+  create: false
+  annotations: {}
+  name: ""

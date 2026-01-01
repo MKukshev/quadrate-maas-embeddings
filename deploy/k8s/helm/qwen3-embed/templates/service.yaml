@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "qwen3-embed.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "qwen3-embed.name" . }}
+    helm.sh/chart: {{ include "qwen3-embed.chart" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.port }}
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: {{ include "qwen3-embed.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}

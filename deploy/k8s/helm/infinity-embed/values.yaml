@@ -1,0 +1,63 @@
+replicaCount: 1
+
+image:
+  repository: infini-ai/infinity-emb
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 7997
+
+command:
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "7997"
+  - "--model-id"
+  - "BAAI/bge-m3"
+  - "--served-name"
+  - "BAAI/bge-m3"
+  - "--model-id"
+  - "intfloat/multilingual-e5-large"
+  - "--served-name"
+  - "intfloat/multilingual-e5-large"
+  - "--model-id"
+  - "ai-forever/FRIDA"
+  - "--served-name"
+  - "ai-forever/FRIDA"
+
+resources:
+  requests:
+    cpu: "1000m"
+    memory: "8Gi"
+  limits:
+    nvidia.com/gpu: 1
+    memory: "16Gi"
+
+gpu:
+  enabled: false
+  resource: nvidia.com/gpu
+  count: 1
+  migProfile: ""
+  annotations: {}
+
+livenessProbe:
+  path: /health/live
+  initialDelaySeconds: 20
+  periodSeconds: 20
+  timeoutSeconds: 5
+
+readinessProbe:
+  path: /health/ready
+  initialDelaySeconds: 20
+  periodSeconds: 20
+  timeoutSeconds: 5
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+podAnnotations: {}

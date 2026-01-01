@@ -1,0 +1,6 @@
+apiVersion: v2
+name: rerank
+description: Rerank service chart
+version: 0.1.0
+appVersion: "0.1.0"
+type: application
