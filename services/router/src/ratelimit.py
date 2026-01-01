@@ -6,6 +6,7 @@ from typing import Dict
 
 from fastapi import HTTPException, status
 
+from .metrics import RATE_LIMIT_DROPS
 from .settings import RateLimitConfig, RateLimitSettings
 
 
@@ -54,6 +55,7 @@ class RateLimiter:
         bucket = self._get_bucket(api_key or "anonymous")
         wait_time = await bucket.consume()
         if wait_time > 0:
+            RATE_LIMIT_DROPS.labels(api_key=api_key or "anonymous").inc()
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=f"Rate limit exceeded, retry after {wait_time:.2f} seconds",

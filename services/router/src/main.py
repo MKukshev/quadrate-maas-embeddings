@@ -14,7 +14,13 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field, field_validator
 
 from .auth import Authenticator
-from .metrics import REQUEST_COUNTER, REQUEST_LATENCY
+from .metrics import (
+    RERANK_DOCUMENTS_COUNTER,
+    REQUEST_COUNTER,
+    REQUEST_LATENCY,
+    UPSTREAM_ERRORS,
+    UPSTREAM_LATENCY,
+)
 from .ratelimit import RateLimiter
 from .routing import RoutingConfig, UpstreamType, load_routing_config
 from .settings import AppSettings, AuthSettings, RateLimitSettings, load_auth_settings, load_rate_limit_settings
@@ -202,23 +208,29 @@ def create_app() -> FastAPI:
         try:
             if route.upstream.type == UpstreamType.INFINITY:
                 served_name = getattr(route, "served_name", None)
-                result = await infinity.embeddings(
-                    state.http_client,
-                    route.upstream,
-                    upstream_payload,
-                    request_id,
-                    served_model=served_name,
-                )
+                with UPSTREAM_LATENCY.labels(upstream=route.upstream.url.host, operation="embeddings").time():
+                    result = await infinity.embeddings(
+                        state.http_client,
+                        route.upstream,
+                        upstream_payload,
+                        request_id,
+                        served_model=served_name,
+                    )
             elif route.upstream.type == UpstreamType.QWEN3:
-                result = await qwen3.embeddings(state.http_client, route.upstream, upstream_payload, request_id)
+                with UPSTREAM_LATENCY.labels(upstream=route.upstream.url.host, operation="embeddings").time():
+                    result = await qwen3.embeddings(state.http_client, route.upstream, upstream_payload, request_id)
             else:
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail=f"Unsupported upstream for embeddings: {route.upstream.type}",
                 )
         except httpx.HTTPStatusError as exc:
+            UPSTREAM_ERRORS.labels(
+                upstream=route.upstream.url.host, operation="embeddings", status=str(exc.response.status_code)
+            ).inc()
             raise HTTPException(status_code=exc.response.status_code, detail=str(exc)) from exc
         except httpx.RequestError as exc:
+            UPSTREAM_ERRORS.labels(upstream=route.upstream.url.host, operation="embeddings", status="request_error").inc()
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         return result
 
@@ -252,16 +264,22 @@ def create_app() -> FastAPI:
         request_id = request.state.request_id
         try:
             if route.upstream.type == UpstreamType.RERANK:
-                result = await rerank.rerank(state.http_client, route.upstream, upstream_payload, request_id)
+                with UPSTREAM_LATENCY.labels(upstream=route.upstream.url.host, operation="rerank").time():
+                    result = await rerank.rerank(state.http_client, route.upstream, upstream_payload, request_id)
             else:
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail=f"Unsupported upstream for rerank: {route.upstream.type}",
                 )
         except httpx.HTTPStatusError as exc:
+            UPSTREAM_ERRORS.labels(
+                upstream=route.upstream.url.host, operation="rerank", status=str(exc.response.status_code)
+            ).inc()
             raise HTTPException(status_code=exc.response.status_code, detail=str(exc)) from exc
         except httpx.RequestError as exc:
+            UPSTREAM_ERRORS.labels(upstream=route.upstream.url.host, operation="rerank", status="request_error").inc()
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        RERANK_DOCUMENTS_COUNTER.labels(model=payload.model).inc(len(payload.documents))
         return result
 
     return app
