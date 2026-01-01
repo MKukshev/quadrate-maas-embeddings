@@ -40,6 +40,15 @@ class AppSettings(BaseSettings):
     auth_path: Path = Field(default=Path("configs/auth.yaml"))
     rate_limits_path: Path = Field(default=Path("configs/rate_limits.yaml"))
     request_timeout_seconds: float = Field(default=30.0, gt=0)
+    tokenizer_name: Optional[str] = Field(default=None, description="Optional tokenizer to use for token counting")
+    safe_request_token_limit: Optional[int] = Field(
+        default=None, description="Maximum allowed tokens for a single request", gt=0
+    )
+    document_token_limit: Optional[int] = Field(
+        default=None,
+        description="Optional per-document token truncation limit before sending upstream",
+        gt=0,
+    )
     allow_disabled_models: bool = Field(
         default=False,
         description="Expose disabled models in /v1/models when True, otherwise hide them.",

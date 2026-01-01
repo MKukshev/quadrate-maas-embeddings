@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from services.router.src.main import create_app
 from services.router.src.routing import UpstreamConfig, load_routing_config
+from services.router.src.tokenization import TokenizerProvider
 
 
 def write_yaml(path: Path, content: dict) -> None:
@@ -67,6 +68,26 @@ def with_env(monkeypatch: pytest.MonkeyPatch, paths: dict[str, Path]) -> None:
     monkeypatch.setenv("ROUTER_AUTH_PATH", str(paths["auth"]))
     monkeypatch.setenv("ROUTER_RATE_LIMITS_PATH", str(paths["rate"]))
     monkeypatch.setenv("ROUTER_ALLOW_DISABLED_MODELS", "true")
+    monkeypatch.setenv("ROUTER_TOKENIZER_NAME", "dummy-tokenizer")
+
+
+class DummyTokenizer:
+    def __call__(self, text, add_special_tokens=False, return_length=True, is_split_into_words=False, **kwargs):
+        tokens = text.split()
+        return {"length": [len(tokens)], "input_ids": [list(range(len(tokens)))]}
+
+    def decode(self, input_ids, skip_special_tokens=True):
+        return " ".join(["token"] * len(input_ids))
+
+
+@pytest.fixture(autouse=True)
+def mock_tokenizer_provider(monkeypatch: pytest.MonkeyPatch):
+    dummy = DummyTokenizer()
+
+    def _get(self, name: str):
+        return dummy
+
+    monkeypatch.setattr(TokenizerProvider, "get", _get)
 
 
 def test_load_routing_config(tmp_path: Path):
@@ -139,6 +160,23 @@ def test_successful_embedding_proxy(httpx_mock, tmp_path: Path, monkeypatch: pyt
     assert body["data"][0]["embedding"] == [0.1, 0.2, 0.3]
 
 
+def test_safe_limit_exceeded_returns_400(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path)
+    with_env(monkeypatch, paths)
+    monkeypatch.setenv("ROUTER_SAFE_REQUEST_TOKEN_LIMIT", "1")
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "test-embedding", "input": "too many tokens here"},
+            headers={"X-API-Key": "test-key"},
+        )
+
+    assert response.status_code == 400
+    assert "exceeds safe limit" in response.json()["error"]["message"]
+
+
 def test_served_name_forwarded(httpx_mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     paths = setup_configs(tmp_path, served_name="upstream-model")
     with_env(monkeypatch, paths)
@@ -160,6 +198,31 @@ def test_served_name_forwarded(httpx_mock, tmp_path: Path, monkeypatch: pytest.M
 
     assert response.status_code == 200
     assert captured["payload"]["model"] == "upstream-model"
+
+
+def test_document_truncation_by_tokens(httpx_mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path)
+    with_env(monkeypatch, paths)
+    monkeypatch.setenv("ROUTER_DOCUMENT_TOKEN_LIMIT", "2")
+
+    captured = {}
+
+    def _callback(request: httpx.Request):
+        captured["payload"] = request.json()
+        return httpx.Response(200, json={"data": [{"embedding": [0.1]}]})
+
+    httpx_mock.add_callback(_callback, method="POST", url="http://embed-upstream/v1/embeddings")
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "test-embedding", "input": "one two three four"},
+            headers={"X-API-Key": "test-key"},
+        )
+
+    assert response.status_code == 200
+    assert captured["payload"]["input"] == "token token"
 
 
 def test_timeout_ms_precedence():

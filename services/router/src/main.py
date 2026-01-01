@@ -24,6 +24,7 @@ from .metrics import (
 from .ratelimit import RateLimiter
 from .routing import RoutingConfig, UpstreamType, load_routing_config
 from .settings import AppSettings, AuthSettings, RateLimitSettings, load_auth_settings, load_rate_limit_settings
+from .tokenization import TokenizerProvider, count_text_tokens, truncate_text_to_tokens
 from .upstream import infinity, qwen3, rerank
 
 
@@ -78,6 +79,7 @@ class ApplicationState:
     authenticator: Authenticator
     rate_limiter: RateLimiter
     http_client: httpx.AsyncClient
+    tokenizer_provider: TokenizerProvider
 
 
 def error_response(message: str, status_code: int, code: str | None = None) -> JSONResponse:
@@ -93,6 +95,7 @@ async def lifespan(app: FastAPI):
     rate_limits = load_rate_limit_settings(settings.rate_limits_path)
     authenticator = Authenticator(auth)
     rate_limiter = RateLimiter(rate_limits)
+    tokenizer_provider = TokenizerProvider()
     http_client = httpx.AsyncClient(timeout=settings.request_timeout_seconds)
 
     app.state.state = ApplicationState(
@@ -102,6 +105,7 @@ async def lifespan(app: FastAPI):
         rate_limits=rate_limits,
         authenticator=authenticator,
         rate_limiter=rate_limiter,
+        tokenizer_provider=tokenizer_provider,
         http_client=http_client,
     )
 
@@ -123,9 +127,7 @@ def create_app() -> FastAPI:
         finally:
             timer.observe_duration()
         response.headers["X-Request-Id"] = request_id
-        REQUEST_COUNTER.labels(
-            endpoint=request.url.path, method=request.method, status=str(response.status_code)
-        ).inc()
+        REQUEST_COUNTER.labels(endpoint=request.url.path, method=request.method, status=str(response.status_code)).inc()
         return response
 
     @app.exception_handler(HTTPException)
@@ -144,6 +146,9 @@ def create_app() -> FastAPI:
 
     def get_rate_limiter(state: ApplicationState = Depends(get_state)) -> RateLimiter:
         return state.rate_limiter
+
+    def get_tokenizer_provider(state: ApplicationState = Depends(get_state)) -> TokenizerProvider:
+        return state.tokenizer_provider
 
     def api_key_dependency(
         x_api_key: str | None = Header(default=None, alias="X-API-Key"),
@@ -193,6 +198,7 @@ def create_app() -> FastAPI:
         request: Request,
         api_key: str = Depends(api_key_dependency),
         rate_limiter: RateLimiter = Depends(get_rate_limiter),
+        tokenizer_provider: TokenizerProvider = Depends(get_tokenizer_provider),
         state: ApplicationState = Depends(get_state),
     ):
         await rate_limiter.check(api_key)
@@ -204,7 +210,26 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model disabled")
 
         request_id = request.state.request_id
-        upstream_payload = {"input": payload.input, "model": payload.model}
+        tokenizer_name = state.settings.tokenizer_name or route.served_name or payload.model
+        tokenizer = tokenizer_provider.get(tokenizer_name)
+
+        input_texts = payload.input if isinstance(payload.input, list) else [payload.input]
+        input_token_counts = [count_text_tokens(tokenizer, text) for text in input_texts]
+        total_tokens = sum(input_token_counts)
+        safe_limit = state.settings.safe_request_token_limit
+        if safe_limit is not None and total_tokens > safe_limit:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Request token count {total_tokens} exceeds safe limit {safe_limit}",
+            )
+
+        doc_limit = state.settings.document_token_limit
+        if doc_limit is not None:
+            truncated_inputs = [truncate_text_to_tokens(tokenizer, text, doc_limit) for text in input_texts]
+        else:
+            truncated_inputs = input_texts
+
+        upstream_payload = {"input": truncated_inputs if isinstance(payload.input, list) else truncated_inputs[0], "model": payload.model}
         try:
             if route.upstream.type == UpstreamType.INFINITY:
                 served_name = getattr(route, "served_name", None)
@@ -240,6 +265,7 @@ def create_app() -> FastAPI:
         request: Request,
         api_key: str = Depends(api_key_dependency),
         rate_limiter: RateLimiter = Depends(get_rate_limiter),
+        tokenizer_provider: TokenizerProvider = Depends(get_tokenizer_provider),
         state: ApplicationState = Depends(get_state),
     ):
         await rate_limiter.check(api_key)
@@ -255,10 +281,29 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Requested top_k exceeds max_top_k")
         top_k = min(requested_top_k, len(payload.documents))
 
+        tokenizer_name = state.settings.tokenizer_name or route.model
+        tokenizer = tokenizer_provider.get(tokenizer_name)
+
+        query_tokens = count_text_tokens(tokenizer, payload.query)
+        doc_token_counts = [count_text_tokens(tokenizer, doc) for doc in payload.documents]
+        total_tokens = query_tokens + sum(doc_token_counts)
+        safe_limit = state.settings.safe_request_token_limit
+        if safe_limit is not None and total_tokens > safe_limit:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Request token count {total_tokens} exceeds safe limit {safe_limit}",
+            )
+
+        doc_limit = state.settings.document_token_limit
+        if doc_limit is not None:
+            documents = [truncate_text_to_tokens(tokenizer, doc, doc_limit) for doc in payload.documents]
+        else:
+            documents = payload.documents
+
         upstream_payload = {
             "model": payload.model,
             "query": payload.query,
-            "documents": payload.documents,
+            "documents": documents,
             "top_k": top_k,
         }
         request_id = request.state.request_id
