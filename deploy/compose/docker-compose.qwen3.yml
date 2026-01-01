@@ -2,8 +2,28 @@ version: "3.9"
 
 services:
   router:
-    image: your-registry/router:qwen3
-    restart: unless-stopped
-  rerank:
-    image: your-registry/rerank:qwen3
-    restart: unless-stopped
+    depends_on:
+      - infinity-embed
+      - rerank
+      - qwen3-embed
+    environment:
+      QWEN3_ENABLED: ${QWEN3_ENABLED:-true}
+
+  qwen3-embed:
+    image: ${QWEN3_IMAGE:-registry.cn-hangzhou.aliyuncs.com/qwen-team/qwen-embedding}
+    command:
+      - "--model-id"
+      - "${QWEN3_MODEL_ID:-Qwen/Qwen-Embedding-8B}"
+      - "--port"
+      - "${QWEN3_HTTP_PORT:-9003}"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities:
+                - gpu
+    ports:
+      - "${QWEN3_HTTP_PORT:-9003}:${QWEN3_HTTP_PORT:-9003}"
+    networks:
+      - maas

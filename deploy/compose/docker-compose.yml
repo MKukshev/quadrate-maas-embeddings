@@ -1,5 +1,9 @@
 version: "3.9"
 
+networks:
+  maas:
+    driver: bridge
+
 services:
   router:
     build:
@@ -9,11 +13,15 @@ services:
       - infinity-embed
       - rerank
     environment:
-      ROUTER_ROUTING_PATH: /app/configs/routing.yaml
-      ROUTER_AUTH_PATH: /app/configs/auth.yaml
-      ROUTER_RATE_LIMITS_PATH: /app/configs/rate_limits.yaml
+      ROUTER_ROUTING_PATH: ${ROUTING_PATH:-/app/configs/routing.yaml}
+      ROUTER_AUTH_PATH: ${AUTH_PATH:-/app/configs/auth.yaml}
+      ROUTER_RATE_LIMITS_PATH: ${RATE_LIMITS_PATH:-/app/configs/rate_limits.yaml}
+      QWEN3_ENABLED: ${QWEN3_ENABLED:-false}
+      QWEN3_API_KEY: ${QWEN3_API_KEY:-}
     ports:
-      - "8000:8000"
+      - "${ROUTER_PORT:-8080}:8000"
+    networks:
+      - maas
 
   infinity-embed:
     image: infini-ai/infinity-emb:latest
@@ -36,6 +44,8 @@ services:
       - "ai-forever/FRIDA"
     ports:
       - "7997:7997"
+    networks:
+      - maas
 
   rerank:
     build:
@@ -43,3 +53,5 @@ services:
       dockerfile: services/rerank/Dockerfile
     ports:
       - "9002:9002"
+    networks:
+      - maas
