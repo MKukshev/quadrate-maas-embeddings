@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import httpx
 import yaml
@@ -48,8 +48,10 @@ class EmbeddingRoute(BaseModel):
     """Routing entry for embeddings."""
 
     model: str
+    model_version: Optional[str] = Field(default=None, description="Optional version identifier for the route")
     served_name: Optional[str] = Field(default=None, description="Upstream served model name")
     enabled: bool = True
+    feature_flag: Optional[str] = Field(default=None, description="Feature flag controlling availability")
     upstream: UpstreamConfig
 
 
@@ -57,8 +59,10 @@ class RerankRoute(BaseModel):
     """Routing entry for rerank."""
 
     model: str
+    model_version: Optional[str] = Field(default=None, description="Optional version identifier for the route")
     enabled: bool = True
     max_top_k: int = Field(default=200, ge=1)
+    feature_flag: Optional[str] = Field(default=None, description="Feature flag controlling availability")
     upstream: UpstreamConfig
 
 
@@ -74,7 +78,14 @@ class RoutingConfig(BaseModel):
         models: List[dict] = []
         for route in self.embeddings.values():
             if include_disabled or route.enabled:
-                models.append({"id": route.model, "object": "embedding", "enabled": route.enabled})
+                models.append(
+                    {
+                        "id": route.model,
+                        "object": "embedding",
+                        "enabled": route.enabled,
+                        "model_version": route.model_version,
+                    }
+                )
         for route in self.rerank.values():
             if include_disabled or route.enabled:
                 models.append(
@@ -82,10 +93,55 @@ class RoutingConfig(BaseModel):
                         "id": route.model,
                         "object": "rerank",
                         "enabled": route.enabled,
+                        "model_version": route.model_version,
                         "max_top_k": route.max_top_k,
                     }
                 )
         return models
+
+    def apply_feature_flags(self, flags: Set[str]) -> None:
+        """Soft-disable routes gated by feature flags."""
+
+        for route in self.embeddings.values():
+            if route.feature_flag:
+                route.enabled = route.enabled and (route.feature_flag in flags)
+        for route in self.rerank.values():
+            if route.feature_flag:
+                route.enabled = route.enabled and (route.feature_flag in flags)
+
+    def describe(self) -> dict:
+        """Return routing configuration with secrets masked."""
+
+        def _mask_upstream(upstream: UpstreamConfig) -> dict:
+            upstream_dict = upstream.model_dump()
+            if upstream_dict.get("api_key"):
+                upstream_dict["api_key"] = "***redacted***"
+            return upstream_dict
+
+        return {
+            "embeddings": [
+                {
+                    "model": route.model,
+                    "model_version": route.model_version,
+                    "served_name": route.served_name,
+                    "enabled": route.enabled,
+                    "feature_flag": route.feature_flag,
+                    "upstream": _mask_upstream(route.upstream),
+                }
+                for route in self.embeddings.values()
+            ],
+            "rerank": [
+                {
+                    "model": route.model,
+                    "model_version": route.model_version,
+                    "enabled": route.enabled,
+                    "feature_flag": route.feature_flag,
+                    "max_top_k": route.max_top_k,
+                    "upstream": _mask_upstream(route.upstream),
+                }
+                for route in self.rerank.values()
+            ],
+        }
 
 
 def _load_yaml(path: Path) -> dict:

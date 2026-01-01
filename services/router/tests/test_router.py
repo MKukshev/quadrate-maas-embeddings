@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -23,6 +24,8 @@ def setup_configs(
     enabled: bool = True,
     max_top_k: int = 5,
     served_name: str | None = None,
+    model_version: str | None = None,
+    feature_flag: str | None = None,
     rate_limits: dict | None = None,
     allow_anonymous_without_api_keys: bool = False,
 ) -> dict[str, Path]:
@@ -32,6 +35,8 @@ def setup_configs(
                 "model": "test-embedding",
                 "enabled": enabled,
                 **({"served_name": served_name} if served_name else {}),
+                **({"model_version": model_version} if model_version else {}),
+                **({"feature_flag": feature_flag} if feature_flag else {}),
                 "upstream": {
                     "type": "infinity",
                     "url": "http://embed-upstream",
@@ -45,6 +50,8 @@ def setup_configs(
                 "model": "test-rerank",
                 "enabled": enabled,
                 "max_top_k": max_top_k,
+                **({"model_version": model_version} if model_version else {}),
+                **({"feature_flag": feature_flag} if feature_flag else {}),
                 "upstream": {
                     "type": "rerank",
                     "url": "http://rerank-upstream",
@@ -420,3 +427,79 @@ def test_anonymous_mode_disabled_without_keys(tmp_path: Path, monkeypatch: pytes
         response = client.post("/v1/embeddings", json={"model": "test-embedding", "input": "hello"})
         assert response.status_code == 401
         assert "anonymous" in response.json()["error"]["message"].lower()
+
+
+def test_routes_endpoint_masks_secrets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path, model_version="v2", feature_flag="beta-route")
+    with_env(monkeypatch, paths)
+    monkeypatch.setenv("ROUTER_FEATURE_FLAGS", "beta-route")
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/v1/routes")
+        assert response.status_code == 200
+        body = response.json()
+        embedding_route = body["embeddings"][0]
+        assert embedding_route["model_version"] == "v2"
+        assert embedding_route["feature_flag"] == "beta-route"
+        assert embedding_route["upstream"]["api_key"] == "***redacted***"
+
+
+def test_feature_flag_soft_disables_route(httpx_mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path, feature_flag="beta-route")
+    with_env(monkeypatch, paths)
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "test-embedding", "input": "hello"},
+            headers={"X-API-Key": "test-key"},
+        )
+        assert response.status_code == 503
+
+    monkeypatch.setenv("ROUTER_FEATURE_FLAGS", "beta-route")
+    httpx_mock.add_response(
+        method="POST",
+        url="http://embed-upstream/v1/embeddings",
+        json={"data": [{"embedding": [0.2, 0.3]}]},
+    )
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "test-embedding", "input": "hello"},
+            headers={"X-API-Key": "test-key"},
+        )
+        assert response.status_code == 200
+
+
+def test_routing_reload_updates_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path)
+    with_env(monkeypatch, paths)
+    monkeypatch.setenv("ROUTER_ROUTING_RELOAD_INTERVAL_SECONDS", "0.1")
+    app = create_app()
+    with TestClient(app) as client:
+        initial = client.get("/v1/models")
+        assert any(model["id"] == "test-embedding" for model in initial.json()["data"])
+
+        updated_routing = {
+            "embeddings": [
+                {
+                    "model": "new-embedding",
+                    "enabled": True,
+                    "upstream": {
+                        "type": "infinity",
+                        "url": "http://embed-upstream",
+                    },
+                }
+            ],
+            "rerank": [],
+        }
+        write_yaml(paths["routing"], updated_routing)
+
+        for _ in range(5):
+            time.sleep(0.2)
+            later = client.get("/v1/models")
+            if any(model["id"] == "new-embedding" for model in later.json()["data"]):
+                break
+        else:
+            pytest.fail("Routing config did not reload with new model")
