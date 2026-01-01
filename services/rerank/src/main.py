@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -14,6 +15,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from .batching import RerankBatcher
 from .inference import rerank_documents
 from .metrics import DOCUMENT_COUNTER, ERROR_COUNTER, REQUEST_COUNTER, REQUEST_LATENCY
 from .model import RerankModel
@@ -58,6 +60,12 @@ class ServiceSettings(BaseModel):
     model_mapping: dict[str, str] = Field(default_factory=dict)
     max_documents: int = Field(default=50, ge=1)
     max_document_length: int = Field(default=4096, ge=1)
+    device_preference: str = Field(default="auto")
+    mixed_precision: bool = Field(default=True)
+    enable_quantization: bool = Field(default=False)
+    max_batch_size: int = Field(default=8, ge=1)
+    batch_delay_ms: int = Field(default=20, ge=1)
+    queue_timeout_ms: int = Field(default=1000, ge=1)
 
     @classmethod
     def from_env(cls) -> "ServiceSettings":
@@ -82,6 +90,16 @@ class ServiceSettings(BaseModel):
             max_document_length=int(
                 os.getenv("RERANK_MAX_DOCUMENT_LENGTH", cls.model_fields["max_document_length"].default)
             ),
+            device_preference=os.getenv("RERANK_DEVICE", cls.model_fields["device_preference"].default),
+            mixed_precision=_parse_bool(
+                os.getenv("RERANK_MIXED_PRECISION", str(cls.model_fields["mixed_precision"].default))
+            ),
+            enable_quantization=_parse_bool(
+                os.getenv("RERANK_QUANTIZATION", str(cls.model_fields["enable_quantization"].default))
+            ),
+            max_batch_size=int(os.getenv("RERANK_MAX_BATCH_SIZE", cls.model_fields["max_batch_size"].default)),
+            batch_delay_ms=int(os.getenv("RERANK_BATCH_DELAY_MS", cls.model_fields["batch_delay_ms"].default)),
+            queue_timeout_ms=int(os.getenv("RERANK_QUEUE_TIMEOUT_MS", cls.model_fields["queue_timeout_ms"].default)),
         )
         settings._validate_model_mapping()
         return settings
@@ -104,6 +122,13 @@ class ServiceSettings(BaseModel):
 class ApplicationState:
     settings: ServiceSettings
     model: RerankModel
+    batcher: RerankBatcher
+
+
+def _parse_bool(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def error_response(message: str, status_code: int) -> JSONResponse:
@@ -116,12 +141,27 @@ async def lifespan(app: FastAPI, model_loader: Callable[[ServiceSettings], Reran
     settings = ServiceSettings.from_env()
     model = model_loader(settings)
     model.warmup()
-    app.state.state = ApplicationState(settings=settings, model=model)
+    batcher = RerankBatcher(
+        model.score_pairs,
+        max_batch_size=settings.max_batch_size,
+        max_batch_delay_ms=settings.batch_delay_ms,
+        queue_timeout_ms=settings.queue_timeout_ms,
+    )
+    batcher.start()
+    app.state.state = ApplicationState(settings=settings, model=model, batcher=batcher)
     yield
+    await batcher.close()
 
 
 def create_app(model_loader: Callable[[ServiceSettings], RerankModel] | None = None) -> FastAPI:
-    loader = model_loader or (lambda settings: RerankModel(settings.model_name))
+    loader = model_loader or (
+        lambda settings: RerankModel(
+            settings.model_name,
+            device_preference=settings.device_preference,
+            mixed_precision=settings.mixed_precision,
+            enable_quantization=settings.enable_quantization,
+        )
+    )
     app = FastAPI(title="Rerank Service", lifespan=lambda app: lifespan(app, loader))
 
     @app.middleware("http")
@@ -157,6 +197,9 @@ def create_app(model_loader: Callable[[ServiceSettings], RerankModel] | None = N
     def get_settings(state: ApplicationState = Depends(get_state)) -> ServiceSettings:
         return state.settings
 
+    def get_batcher(state: ApplicationState = Depends(get_state)) -> RerankBatcher:
+        return state.batcher
+
     @app.get("/health/live")
     async def live() -> dict[str, str]:
         return {"status": "ok"}
@@ -175,6 +218,7 @@ def create_app(model_loader: Callable[[ServiceSettings], RerankModel] | None = N
     async def rerank_endpoint(
         payload: RerankRequest,
         model: RerankModel = Depends(get_model),
+        batcher: RerankBatcher = Depends(get_batcher),
         settings: ServiceSettings = Depends(get_settings),
     ):
         canonical_model = settings.resolve_model(payload.model)
@@ -206,7 +250,17 @@ def create_app(model_loader: Callable[[ServiceSettings], RerankModel] | None = N
 
         top_k = payload.top_k or len(payload.documents)
         top_k = min(top_k, len(payload.documents))
-        results = rerank_documents(model, payload.query, payload.documents, top_k)
+        try:
+            results = await rerank_documents(batcher.score, payload.query, payload.documents, top_k)
+        except asyncio.TimeoutError:
+            ERROR_COUNTER.labels(endpoint="/v1/rerank", reason="timeout").inc()
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Rerank request timed out while in queue"
+            )
+        except Exception as exc:
+            logger.exception("Rerank inference failed: %s", exc)
+            ERROR_COUNTER.labels(endpoint="/v1/rerank", reason="inference_error").inc()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Inference failed")
         DOCUMENT_COUNTER.labels(model=canonical_model).inc(len(payload.documents))
         return {"object": "rerank", "model": canonical_model, "results": results}
 

@@ -22,6 +22,9 @@ class FakeModel:
             return self.scores[: len(documents)]
         return list(range(len(documents)))
 
+    def score_pairs(self, pairs: list[tuple[str, str]]) -> list[float]:
+        return self.score(pairs[0][0], [pair[1] for pair in pairs])
+
 
 def override_app(fake: FakeModel) -> TestClient:
     app = create_app(model_loader=lambda settings: fake)
