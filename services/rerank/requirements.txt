@@ -6,3 +6,4 @@ torch
 prometheus-client
 pydantic
 pytest
+httpx

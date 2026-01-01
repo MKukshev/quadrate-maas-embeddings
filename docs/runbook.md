@@ -13,6 +13,7 @@ uvicorn services.router.src.main:app --host 0.0.0.0 --port 8000
 
 # Rerank
 export RERANK_MODEL_NAME=cross-encoder/ms-marco-MiniLM-L-2-v2
+export RERANK_MODEL_MAPPING='{"rerank-base": "cross-encoder/ms-marco-MiniLM-L-2-v2"}'
 uvicorn services.rerank.src.main:app --host 0.0.0.0 --port 9002
 ```
 
@@ -26,7 +27,7 @@ uvicorn services.rerank.src.main:app --host 0.0.0.0 --port 9002
   - `router_rate_limit_drops_total`, `router_rerank_documents_total`
 - Rerank:
   - `rerank_requests_total`, `rerank_request_latency_seconds`
-  - `rerank_documents_total`
+  - `rerank_documents_total`, `rerank_errors_total`
 
 ## Smoke-тест
 

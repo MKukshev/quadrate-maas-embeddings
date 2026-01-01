@@ -28,6 +28,14 @@ def override_app(fake: FakeModel) -> TestClient:
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def set_default_env(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("RERANK_MODEL_NAME", "demo-model")
+    monkeypatch.setenv("RERANK_MAX_DOCUMENTS", "50")
+    monkeypatch.setenv("RERANK_MAX_DOCUMENT_LENGTH", "4096")
+    monkeypatch.delenv("RERANK_MODEL_MAPPING", raising=False)
+
+
 def test_document_limits(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("RERANK_MAX_DOCUMENTS", "1")
     monkeypatch.setenv("RERANK_MAX_DOCUMENT_LENGTH", "5")
@@ -35,13 +43,13 @@ def test_document_limits(monkeypatch: pytest.MonkeyPatch):
     client = override_app(FakeModel())
     response = client.post(
         "/v1/rerank",
-        json={"model": "demo", "query": "hello", "documents": ["short", "extra"]},
+        json={"model": "demo-model", "query": "hello", "documents": ["short", "extra"]},
     )
     assert response.status_code == 400
 
     response = client.post(
         "/v1/rerank",
-        json={"model": "demo", "query": "hello", "documents": ["toolong"]},
+        json={"model": "demo-model", "query": "hello", "documents": ["toolong"]},
     )
     assert response.status_code == 400
 
@@ -50,7 +58,7 @@ def test_empty_documents_validation(monkeypatch: pytest.MonkeyPatch):
     client = override_app(FakeModel())
     response = client.post(
         "/v1/rerank",
-        json={"model": "demo", "query": "hello", "documents": []},
+        json={"model": "demo-model", "query": "hello", "documents": []},
     )
     assert response.status_code == 400
 
@@ -60,7 +68,7 @@ def test_top_k_sorting(monkeypatch: pytest.MonkeyPatch):
     client = override_app(fake)
     response = client.post(
         "/v1/rerank",
-        json={"model": "demo", "query": "hello", "documents": ["a", "b", "c"], "top_k": 2},
+        json={"model": "demo-model", "query": "hello", "documents": ["a", "b", "c"], "top_k": 2},
     )
     assert response.status_code == 200
     body = response.json()
@@ -74,9 +82,31 @@ def test_top_k_defaults(monkeypatch: pytest.MonkeyPatch):
     client = override_app(fake)
     response = client.post(
         "/v1/rerank",
-        json={"model": "demo", "query": "hello", "documents": ["first", "second"]},
+        json={"model": "demo-model", "query": "hello", "documents": ["first", "second"]},
     )
     assert response.status_code == 200
     body = response.json()
     assert len(body["results"]) == 2
     assert body["results"][0]["document"] == "first"
+
+
+def test_model_alias(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("RERANK_MODEL_MAPPING", '{"demo-alias": "demo-model"}')
+    client = override_app(FakeModel(scores=[0.3]))
+    response = client.post(
+        "/v1/rerank",
+        json={"model": "demo-alias", "query": "hello", "documents": ["only-one"]},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model"] == "demo-model"
+
+
+def test_unknown_model(monkeypatch: pytest.MonkeyPatch):
+    client = override_app(FakeModel(scores=[0.4]))
+    response = client.post(
+        "/v1/rerank",
+        json={"model": "unsupported", "query": "hello", "documents": ["only-one"]},
+    )
+    assert response.status_code == 400
+    assert "Unsupported model" in response.json()["error"]["message"]
