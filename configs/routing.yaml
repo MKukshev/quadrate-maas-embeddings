@@ -1,1 +1,25 @@
-# Настройки роутинга для сервисов.
+embeddings:
+  - model: "infinity-embedding"
+    enabled: true
+    upstream:
+      type: "infinity"
+      url: "http://localhost:9001"
+      api_key: "infinity-key"
+      timeout_seconds: 10
+  - model: "qwen-embedding"
+    enabled: true
+    upstream:
+      type: "qwen3"
+      url: "http://localhost:9003"
+      api_key: "qwen3-key"
+      timeout_seconds: 10
+
+rerank:
+  - model: "rerank-base"
+    enabled: true
+    max_top_k: 50
+    upstream:
+      type: "rerank"
+      url: "http://localhost:9002"
+      api_key: "rerank-key"
+      timeout_seconds: 10
