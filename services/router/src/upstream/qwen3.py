@@ -25,7 +25,7 @@ async def embeddings(
     )
     response.raise_for_status()
     data = response.json()
-    embeddings_data = data.get("data") or []
+    embeddings_data = data.get("data") or data.get("embeddings") or []
     normalized = []
     for idx, item in enumerate(embeddings_data):
         vector = item.get("embedding") if isinstance(item, dict) else item

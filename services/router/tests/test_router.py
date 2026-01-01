@@ -28,6 +28,8 @@ def setup_configs(
     feature_flag: str | None = None,
     rate_limits: dict | None = None,
     allow_anonymous_without_api_keys: bool = False,
+    upstream_type: str = "infinity",
+    upstream_url: str = "http://embed-upstream",
 ) -> dict[str, Path]:
     routing = {
         "embeddings": [
@@ -37,12 +39,7 @@ def setup_configs(
                 **({"served_name": served_name} if served_name else {}),
                 **({"model_version": model_version} if model_version else {}),
                 **({"feature_flag": feature_flag} if feature_flag else {}),
-                "upstream": {
-                    "type": "infinity",
-                    "url": "http://embed-upstream",
-                    "api_key": "embed-key",
-                    "timeout_seconds": 5,
-                },
+                "upstream": {"type": upstream_type, "url": upstream_url, "api_key": "embed-key", "timeout_seconds": 5},
             }
         ],
         "rerank": [
@@ -397,6 +394,27 @@ def test_rate_limit_exceeded_returns_429_and_metric(httpx_mock, tmp_path: Path, 
         assert 'router_rate_limit_drops_total{api_key="test-key"}' in metrics
 
 
+def test_request_metrics_include_success_status(httpx_mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path)
+    with_env(monkeypatch, paths)
+
+    httpx_mock.add_response(
+        method="POST",
+        url="http://embed-upstream/v1/embeddings",
+        json={"data": [{"embedding": [0.1]}]},
+    )
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings", json={"model": "test-embedding", "input": "hello"}, headers={"X-API-Key": "test-key"}
+        )
+        assert response.status_code == 200
+
+        metrics = client.get("/metrics").text
+        assert 'router_requests_total{endpoint="/v1/embeddings",method="POST",status="200"}' in metrics
+
+
 def test_anonymous_mode_allowed_when_no_keys_and_rate_limited(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     paths = setup_configs(
         tmp_path,
@@ -503,3 +521,59 @@ def test_routing_reload_updates_configuration(tmp_path: Path, monkeypatch: pytes
                 break
         else:
             pytest.fail("Routing config did not reload with new model")
+
+
+def test_infinity_contract_normalizes_embeddings_and_headers(httpx_mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path)
+    with_env(monkeypatch, paths)
+    captured: dict = {}
+
+    def _callback(request: httpx.Request):
+        captured["headers"] = dict(request.headers)
+        return httpx.Response(200, json={"embeddings": [[0.9, 0.8]]})
+
+    httpx_mock.add_callback(_callback, method="POST", url="http://embed-upstream/v1/embeddings")
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "test-embedding", "input": "hello world"},
+            headers={"X-API-Key": "test-key"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"][0]["embedding"] == [0.9, 0.8]
+    assert body["data"][0]["index"] == 0
+    assert response.headers.get("X-Request-Id")
+    assert captured["headers"]["X-Request-Id"] == response.headers["X-Request-Id"]
+
+
+def test_qwen_contract_accepts_embeddings_field(httpx_mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(
+        tmp_path,
+        upstream_type="qwen3",
+        upstream_url="http://qwen-upstream",
+    )
+    with_env(monkeypatch, paths)
+
+    httpx_mock.add_response(
+        method="POST",
+        url="http://qwen-upstream/v1/embeddings",
+        json={"embeddings": [{"embedding": [1, 2, 3]}]},
+    )
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "test-embedding", "input": "hello"},
+            headers={"X-API-Key": "test-key"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"][0]["embedding"] == [1, 2, 3]
+    assert body["data"][0]["index"] == 0
+    assert body["model"] == "test-embedding"
