@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -13,8 +15,10 @@ from pydantic import BaseModel, Field, field_validator
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .inference import rerank_documents
-from .metrics import DOCUMENT_COUNTER, REQUEST_COUNTER, REQUEST_LATENCY
+from .metrics import DOCUMENT_COUNTER, ERROR_COUNTER, REQUEST_COUNTER, REQUEST_LATENCY
 from .model import RerankModel
+
+logger = logging.getLogger(__name__)
 
 
 class ErrorContent(BaseModel):
@@ -51,18 +55,49 @@ class RerankRequest(BaseModel):
 
 class ServiceSettings(BaseModel):
     model_name: str = Field(default="cross-encoder/ms-marco-MiniLM-L-2-v2")
+    model_mapping: dict[str, str] = Field(default_factory=dict)
     max_documents: int = Field(default=50, ge=1)
     max_document_length: int = Field(default=4096, ge=1)
 
     @classmethod
     def from_env(cls) -> "ServiceSettings":
-        return cls(
-            model_name=os.getenv("RERANK_MODEL_NAME", cls.model_fields["model_name"].default),
+        model_name = os.getenv("RERANK_MODEL_NAME", cls.model_fields["model_name"].default)
+        mapping_value = os.getenv("RERANK_MODEL_MAPPING", "").strip()
+        model_mapping: dict[str, str] = {}
+        if mapping_value:
+            try:
+                parsed_mapping = json.loads(mapping_value)
+            except json.JSONDecodeError as exc:  # pragma: no cover - configuration error
+                raise ValueError("RERANK_MODEL_MAPPING must be valid JSON") from exc
+            if not isinstance(parsed_mapping, dict) or not all(
+                isinstance(key, str) and isinstance(value, str) for key, value in parsed_mapping.items()
+            ):
+                raise ValueError("RERANK_MODEL_MAPPING must be a JSON object with string keys and values")
+            model_mapping = parsed_mapping
+
+        settings = cls(
+            model_name=model_name,
+            model_mapping=model_mapping,
             max_documents=int(os.getenv("RERANK_MAX_DOCUMENTS", cls.model_fields["max_documents"].default)),
             max_document_length=int(
                 os.getenv("RERANK_MAX_DOCUMENT_LENGTH", cls.model_fields["max_document_length"].default)
             ),
         )
+        settings._validate_model_mapping()
+        return settings
+
+    def _validate_model_mapping(self) -> None:
+        invalid_targets = {alias: target for alias, target in self.model_mapping.items() if target != self.model_name}
+        if invalid_targets:
+            targets = ", ".join(sorted(set(invalid_targets.values())))
+            raise ValueError(
+                f"Model mapping targets must match RERANK_MODEL_NAME ({self.model_name}); found: {targets}"
+            )
+
+    def resolve_model(self, requested_model: str) -> str | None:
+        if requested_model == self.model_name:
+            return self.model_name
+        return self.model_mapping.get(requested_model)
 
 
 @dataclass
@@ -142,6 +177,18 @@ def create_app(model_loader: Callable[[ServiceSettings], RerankModel] | None = N
         model: RerankModel = Depends(get_model),
         settings: ServiceSettings = Depends(get_settings),
     ):
+        canonical_model = settings.resolve_model(payload.model)
+        if canonical_model is None:
+            ERROR_COUNTER.labels(endpoint="/v1/rerank", reason="invalid_model").inc()
+            allowed_models = ", ".join(sorted({settings.model_name, *settings.model_mapping.keys()}))
+            logger.warning("Unsupported rerank model requested: %s", payload.model)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported model '{payload.model}'. Allowed models: {allowed_models}",
+            )
+        if payload.model != canonical_model:
+            logger.info("Mapping rerank model '%s' to served model '%s'", payload.model, canonical_model)
+
         if len(payload.documents) > settings.max_documents:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -160,8 +207,8 @@ def create_app(model_loader: Callable[[ServiceSettings], RerankModel] | None = N
         top_k = payload.top_k or len(payload.documents)
         top_k = min(top_k, len(payload.documents))
         results = rerank_documents(model, payload.query, payload.documents, top_k)
-        DOCUMENT_COUNTER.labels(model=payload.model).inc(len(payload.documents))
-        return {"object": "rerank", "model": payload.model, "results": results}
+        DOCUMENT_COUNTER.labels(model=canonical_model).inc(len(payload.documents))
+        return {"object": "rerank", "model": canonical_model, "results": results}
 
     return app
 

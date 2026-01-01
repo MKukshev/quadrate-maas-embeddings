@@ -12,6 +12,12 @@ REQUEST_LATENCY = Histogram(
     labelnames=("endpoint", "method"),
 )
 
+ERROR_COUNTER = Counter(
+    "rerank_errors_total",
+    "Number of rerank service errors",
+    labelnames=("endpoint", "reason"),
+)
+
 DOCUMENT_COUNTER = Counter(
     "rerank_documents_total",
     "Number of documents processed by the rerank endpoint",

@@ -21,6 +21,8 @@ spec:
           env:
             - name: RERANK_MODEL_NAME
               value: "cross-encoder/ms-marco-MiniLM-L-2-v2"
+            - name: RERANK_MODEL_MAPPING
+              value: "{}"
             - name: RERANK_MAX_DOCUMENTS
               value: "50"
             - name: RERANK_MAX_DOCUMENT_LENGTH

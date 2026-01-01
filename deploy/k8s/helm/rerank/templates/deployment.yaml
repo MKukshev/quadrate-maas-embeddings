@@ -30,6 +30,8 @@ spec:
           env:
             - name: RERANK_MODEL_NAME
               value: {{ .Values.env.modelName | quote }}
+            - name: RERANK_MODEL_MAPPING
+              value: {{ .Values.env.modelMapping | quote }}
             - name: RERANK_MAX_DOCUMENTS
               value: {{ .Values.env.maxDocuments | quote }}
             - name: RERANK_MAX_DOCUMENT_LENGTH
