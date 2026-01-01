@@ -59,6 +59,24 @@ class AppSettings(BaseSettings):
         description="Expose disabled models in /v1/models when True, otherwise hide them.",
     )
     environment: str = Field(default="development")
+    routing_reload_interval_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        description="Polling interval for reloading routing configuration without restart.",
+    )
+    feature_flags: set[str] = Field(
+        default_factory=set,
+        description="Comma-separated list of enabled feature flags.",
+    )
+
+    @field_validator("feature_flags", mode="before")
+    @classmethod
+    def _parse_feature_flags(cls, value):
+        if value is None:
+            return set()
+        if isinstance(value, str):
+            return {flag.strip() for flag in value.split(",") if flag.strip()}
+        return set(value)
 
     model_config = SettingsConfigDict(env_prefix="ROUTER_", case_sensitive=False)
 

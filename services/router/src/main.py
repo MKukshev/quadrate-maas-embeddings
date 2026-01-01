@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -84,6 +85,8 @@ class ApplicationState:
     rate_limiter: RateLimiter
     http_client: httpx.AsyncClient
     tokenizer_provider: TokenizerProvider
+    routing_mtime: float | None = None
+    routing_reload_task: asyncio.Task | None = None
 
 
 def error_response(message: str, status_code: int, code: str | None = None) -> JSONResponse:
@@ -104,6 +107,7 @@ def ensure_response_model_matches(result: dict, requested_model: str) -> None:
 async def lifespan(app: FastAPI):
     settings = AppSettings()
     routing = load_routing_config(settings.routing_path)
+    routing.apply_feature_flags(settings.feature_flags)
     auth = load_auth_settings(settings.auth_path)
     rate_limits = load_rate_limit_settings(settings.rate_limits_path)
     authenticator = Authenticator(auth)
@@ -120,10 +124,40 @@ async def lifespan(app: FastAPI):
         rate_limiter=rate_limiter,
         tokenizer_provider=tokenizer_provider,
         http_client=http_client,
+        routing_mtime=settings.routing_path.stat().st_mtime if settings.routing_path.exists() else None,
     )
+
+    state = app.state.state
+
+    async def _watch_routing():
+        path = settings.routing_path
+        interval = settings.routing_reload_interval_seconds
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                mtime = path.stat().st_mtime
+            except FileNotFoundError:
+                logger.error("Routing config file missing: %s", path)
+                continue
+            if state.routing_mtime is not None and mtime <= state.routing_mtime:
+                continue
+            try:
+                new_routing = load_routing_config(path)
+                new_routing.apply_feature_flags(settings.feature_flags)
+                state.routing = new_routing
+                state.routing_mtime = mtime
+                logger.info("Reloaded routing configuration from %s", path)
+            except Exception as exc:  # pragma: no cover - defensive path
+                logger.exception("Failed to reload routing configuration from %s", path, exc_info=exc)
+
+    state.routing_reload_task = asyncio.create_task(_watch_routing())
 
     yield
 
+    if state.routing_reload_task:
+        state.routing_reload_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await state.routing_reload_task
     await http_client.aclose()
 
 
@@ -229,6 +263,10 @@ def create_app() -> FastAPI:
     async def list_models(state: ApplicationState = Depends(get_state)) -> dict[str, list[dict]]:
         include_disabled = state.settings.allow_disabled_models
         return {"data": state.routing.list_models(include_disabled=include_disabled)}
+
+    @app.get("/v1/routes")
+    async def list_routes(state: ApplicationState = Depends(get_state)) -> dict[str, dict]:
+        return state.routing.describe()
 
     @app.post("/v1/embeddings")
     async def create_embeddings(
