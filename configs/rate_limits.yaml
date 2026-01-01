@@ -1,1 +1,7 @@
-# Ограничения частоты запросов.
+default:
+  capacity: 60
+  refill_rate: 30
+per_api_key:
+  admin-key:
+    capacity: 120
+    refill_rate: 60
