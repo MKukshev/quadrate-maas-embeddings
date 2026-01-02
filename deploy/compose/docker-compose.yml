@@ -3,6 +3,8 @@ version: "3.9"
 networks:
   maas:
     driver: bridge
+  quadrate-lan:
+    external: true
 
 services:
   router:
@@ -22,9 +24,12 @@ services:
       - "${ROUTER_PORT:-8085}:8000"
     networks:
       - maas
+      - quadrate-lan
 
   infinity-embed:
     image: michaelf34/infinity:latest
+    environment:
+      HF_HUB_DISABLE_XET: "1"
     command:
       - "v2"
       - "--host"
@@ -43,6 +48,10 @@ services:
       - "7997:7997"
     networks:
       - maas
+      - quadrate-lan
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     volumes:
       - infinity-cache:/root/.cache
     deploy:
@@ -63,6 +72,7 @@ services:
       - "9002:9002"
     networks:
       - maas
+      - quadrate-lan
 
 volumes:
   infinity-cache:
