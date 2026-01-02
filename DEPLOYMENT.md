@@ -127,7 +127,7 @@ embeddings:
 
 rerank:
   - model: "rerank-base"
-    served_name: "cross-encoder/ms-marco-MiniLM-L-2-v2"
+    served_name: "BAAI/bge-reranker-v2-m3"
     enabled: true
     max_top_k: 50
     upstream:
@@ -347,8 +347,8 @@ services:
           cpus: '4'
           memory: 8G
     environment:
-      RERANK_MODEL_NAME: cross-encoder/ms-marco-MiniLM-L-2-v2
-      RERANK_MODEL_MAPPING: '{"rerank-base": "cross-encoder/ms-marco-MiniLM-L-2-v2"}'
+      RERANK_MODEL_NAME: BAAI/bge-reranker-v2-m3
+      RERANK_MODEL_MAPPING: '{"rerank-base": "BAAI/bge-reranker-v2-m3"}'
       RERANK_MAX_BATCH_SIZE: 16
       RERANK_DEVICE: cpu
     healthcheck:
@@ -483,7 +483,7 @@ kubectl logs -f deployment/router -n maas
 
 | Переменная | По умолчанию | Описание |
 |------------|--------------|----------|
-| `RERANK_MODEL_NAME` | `cross-encoder/ms-marco-MiniLM-L-2-v2` | Модель для ранжирования |
+| `RERANK_MODEL_NAME` | `BAAI/bge-reranker-v2-m3` | Модель для ранжирования |
 | `RERANK_MODEL_MAPPING` | `{}` | JSON с алиасами моделей |
 | `RERANK_MAX_DOCUMENTS` | `50` | Макс. документов в запросе |
 | `RERANK_MAX_DOCUMENT_LENGTH` | `4096` | Макс. длина документа (chars) |

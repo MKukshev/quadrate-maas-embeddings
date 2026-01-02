@@ -58,7 +58,7 @@ services:
       context: ../..
       dockerfile: services/rerank/Dockerfile
     environment:
-      RERANK_MODEL_MAPPING: '{"rerank-base": "cross-encoder/ms-marco-MiniLM-L-2-v2"}'
+      RERANK_MODEL_MAPPING: '{"rerank-base": "BAAI/bge-reranker-v2-m3"}'
     ports:
       - "9002:9002"
     networks:

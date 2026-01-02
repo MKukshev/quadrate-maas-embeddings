@@ -413,7 +413,7 @@ curl -X POST http://localhost:7997/v1/embeddings \
 # Прямой запрос к Rerank
 curl -X POST http://localhost:9002/v1/rerank \
   -H "Content-Type: application/json" \
-  -d '{"model": "cross-encoder/ms-marco-MiniLM-L-2-v2", "query": "q", "documents": ["a"]}'
+  -d '{"model": "BAAI/bge-reranker-v2-m3", "query": "q", "documents": ["a"]}'
 ```
 
 ---

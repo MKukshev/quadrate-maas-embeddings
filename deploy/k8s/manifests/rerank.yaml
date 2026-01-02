@@ -20,7 +20,7 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: RERANK_MODEL_NAME
-              value: "cross-encoder/ms-marco-MiniLM-L-2-v2"
+              value: "BAAI/bge-reranker-v2-m3"
             - name: RERANK_MODEL_MAPPING
               value: "{}"
             - name: RERANK_MAX_DOCUMENTS

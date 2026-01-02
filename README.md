@@ -27,7 +27,7 @@
 
 ### Rerank
 - Основные переменные:
-  - `RERANK_MODEL_NAME` — базовая модель (по умолчанию `cross-encoder/ms-marco-MiniLM-L-2-v2`).
+  - `RERANK_MODEL_NAME` — базовая модель (по умолчанию `BAAI/bge-reranker-v2-m3`).
   - `RERANK_MODEL_MAPPING` — JSON с алиасами моделей.
   - `RERANK_MAX_DOCUMENTS` и `RERANK_MAX_DOCUMENT_LENGTH` — ограничения входных данных.
   - `RERANK_MAX_BATCH_SIZE`, `RERANK_BATCH_DELAY_MS`, `RERANK_QUEUE_TIMEOUT_MS` — параметры батчинга.

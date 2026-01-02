@@ -56,7 +56,7 @@ class RerankRequest(BaseModel):
 
 
 class ServiceSettings(BaseModel):
-    model_name: str = Field(default="cross-encoder/ms-marco-MiniLM-L-2-v2")
+    model_name: str = Field(default="BAAI/bge-reranker-v2-m3")
     model_mapping: dict[str, str] = Field(default_factory=dict)
     max_documents: int = Field(default=50, ge=1)
     max_document_length: int = Field(default=4096, ge=1)
