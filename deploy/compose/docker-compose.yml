@@ -19,7 +19,7 @@ services:
       QWEN3_ENABLED: ${QWEN3_ENABLED:-false}
       QWEN3_API_KEY: ${QWEN3_API_KEY:-}
     ports:
-      - "${ROUTER_PORT:-8080}:8000"
+      - "${ROUTER_PORT:-8085}:8000"
     networks:
       - maas
 

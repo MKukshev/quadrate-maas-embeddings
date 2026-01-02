@@ -65,15 +65,14 @@ docker compose -f deploy/compose/docker-compose.yml up -d
 
 ```bash
 # Health check
-curl http://localhost:8080/health/ready
+curl http://localhost:8085/health/ready
 
 # Список моделей
-curl http://localhost:8080/v1/models
+curl http://localhost:8085/v1/models
 
 # Тестовый запрос
-curl -X POST http://localhost:8080/v1/embeddings \
+curl -X POST http://localhost:8085/v1/embeddings \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: test-key" \
   -d '{"model": "bge-m3", "input": "Hello world"}'
 ```
 
@@ -292,7 +291,7 @@ services:
       ROUTER_RATE_LIMITS_PATH: /app/configs/rate_limits.yaml
       ROUTER_REQUEST_TIMEOUT_SECONDS: 60
     ports:
-      - "8080:8000"
+      - "8085:8000"
     volumes:
       - ./configs:/app/configs:ro
     healthcheck:
@@ -516,22 +515,20 @@ kubectl logs -f deployment/router -n maas
 
 ```bash
 # 1. Health check
-curl http://localhost:8080/health/ready
+curl http://localhost:8085/health/ready
 # Ожидаемый ответ: {"status":"ok"}
 
 # 2. Список моделей
-curl http://localhost:8080/v1/models | jq '.data[].id'
+curl http://localhost:8085/v1/models | jq '.data[].id'
 
 # 3. Embeddings
-curl -X POST http://localhost:8080/v1/embeddings \
-  -H "X-API-Key: test-key" \
+curl -X POST http://localhost:8085/v1/embeddings \
   -H "Content-Type: application/json" \
   -d '{"model": "bge-m3", "input": "test"}' | jq '.data[0].embedding | length'
 # Ожидаемый ответ: 1024
 
 # 4. Rerank
-curl -X POST http://localhost:8080/v1/rerank \
-  -H "X-API-Key: test-key" \
+curl -X POST http://localhost:8085/v1/rerank \
   -H "Content-Type: application/json" \
   -d '{"model": "rerank-base", "query": "test", "documents": ["a", "b"], "top_k": 1}' | jq
 ```

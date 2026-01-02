@@ -19,7 +19,7 @@
 
 Сервис предоставляет OpenAI-совместимый REST API для работы с эмбеддингами и ранжированием документов.
 
-**Base URL:** `http://localhost:8080` (или ваш production endpoint)
+**Base URL:** `http://localhost:8085` (или ваш production endpoint)
 
 ### Endpoints
 
@@ -36,21 +36,27 @@
 
 ## Аутентификация
 
-Все запросы к `/v1/*` endpoints требуют API ключ в заголовке `X-API-Key`.
+По умолчанию сервис работает в **анонимном режиме** — `X-API-Key` не требуется.
 
 ```bash
-curl -H "X-API-Key: your-api-key" http://localhost:8080/v1/models
+curl http://localhost:8085/v1/models
 ```
 
-### Получение ключа
+### Настройка API ключей (опционально)
 
-API ключи настраиваются в файле `configs/auth.yaml`:
+Для включения аутентификации измените `configs/auth.yaml`:
 
 ```yaml
 api_keys:
   - "your-api-key"
   - "another-key"
 allow_anonymous_without_api_keys: false
+```
+
+При включённой аутентификации добавляйте заголовок:
+
+```bash
+curl -H "X-API-Key: your-api-key" http://localhost:8085/v1/models
 ```
 
 ---
@@ -107,14 +113,13 @@ allow_anonymous_without_api_keys: false
 ```python
 import httpx
 
-API_URL = "http://localhost:8080"
-API_KEY = "your-api-key"
+API_URL = "http://localhost:8085"
 
 def get_embeddings(texts: list[str], model: str = "bge-m3") -> list[list[float]]:
     """Получить эмбеддинги для списка текстов."""
     response = httpx.post(
         f"{API_URL}/v1/embeddings",
-        headers={"X-API-Key": API_KEY, "Content-Type": "application/json"},
+        headers={"Content-Type": "application/json"},
         json={"model": model, "input": texts},
         timeout=30.0,
     )
@@ -130,14 +135,12 @@ print(f"Dimension: {len(embeddings[0])}")  # 1024 для bge-m3
 ### Пример на JavaScript/TypeScript
 
 ```typescript
-const API_URL = "http://localhost:8080";
-const API_KEY = "your-api-key";
+const API_URL = "http://localhost:8085";
 
 async function getEmbeddings(texts: string[], model = "bge-m3"): Promise<number[][]> {
   const response = await fetch(`${API_URL}/v1/embeddings`, {
     method: "POST",
     headers: {
-      "X-API-Key": API_KEY,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ model, input: texts }),
@@ -225,7 +228,7 @@ def rerank_documents(
     """Переранжировать документы по релевантности к запросу."""
     response = httpx.post(
         f"{API_URL}/v1/rerank",
-        headers={"X-API-Key": API_KEY, "Content-Type": "application/json"},
+        headers={"Content-Type": "application/json"},
         json={
             "model": model,
             "query": query,
@@ -274,7 +277,7 @@ for r in results:
 ### Получение списка моделей
 
 ```bash
-curl -s http://localhost:8080/v1/models | jq
+curl -s http://localhost:8085/v1/models | jq
 ```
 
 ```json
@@ -299,9 +302,11 @@ import httpx
 import numpy as np
 
 class EmbeddingService:
-    def __init__(self, base_url: str, api_key: str):
+    def __init__(self, base_url: str, api_key: str | None = None):
         self.base_url = base_url
-        self.headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+        self.headers = {"Content-Type": "application/json"}
+        if api_key:
+            self.headers["X-API-Key"] = api_key
     
     def embed(self, texts: list[str], model: str = "bge-m3") -> np.ndarray:
         response = httpx.post(
@@ -357,15 +362,17 @@ from typing import List
 import httpx
 
 class QuadrateEmbeddings(Embeddings):
-    def __init__(self, base_url: str, api_key: str, model: str = "bge-m3"):
+    def __init__(self, base_url: str, model: str = "bge-m3", api_key: str | None = None):
         self.base_url = base_url
-        self.api_key = api_key
         self.model = model
+        self.headers = {"Content-Type": "application/json"}
+        if api_key:
+            self.headers["X-API-Key"] = api_key
     
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         response = httpx.post(
             f"{self.base_url}/v1/embeddings",
-            headers={"X-API-Key": self.api_key, "Content-Type": "application/json"},
+            headers=self.headers,
             json={"model": self.model, "input": texts},
             timeout=120.0,
         )
@@ -379,8 +386,7 @@ class QuadrateEmbeddings(Embeddings):
 from langchain_community.vectorstores import FAISS
 
 embeddings = QuadrateEmbeddings(
-    base_url="http://localhost:8080",
-    api_key="your-api-key",
+    base_url="http://localhost:8085",
     model="bge-m3",
 )
 
@@ -397,9 +403,11 @@ import httpx
 import asyncio
 
 class AsyncEmbeddingClient:
-    def __init__(self, base_url: str, api_key: str):
+    def __init__(self, base_url: str, api_key: str | None = None):
         self.base_url = base_url
-        self.headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+        self.headers = {"Content-Type": "application/json"}
+        if api_key:
+            self.headers["X-API-Key"] = api_key
         self._client = None
     
     async def __aenter__(self):
@@ -434,7 +442,7 @@ class AsyncEmbeddingClient:
 
 # Использование
 async def main():
-    async with AsyncEmbeddingClient("http://localhost:8080", "your-api-key") as client:
+    async with AsyncEmbeddingClient("http://localhost:8085") as client:
         texts = ["Text 1", "Text 2", "Text 3"] * 100  # 300 текстов
         embeddings = await client.embed_batch(texts, batch_size=32)
         print(f"Processed {len(embeddings)} embeddings")
@@ -466,7 +474,6 @@ def embed_with_retry(texts: list[str], max_retries: int = 3) -> list[list[float]
     for attempt in range(max_retries):
         response = httpx.post(
             f"{API_URL}/v1/embeddings",
-            headers={"X-API-Key": API_KEY},
             json={"model": "bge-m3", "input": texts},
         )
         
@@ -519,7 +526,6 @@ def safe_embed(texts: list[str]) -> list[list[float]] | None:
     try:
         response = httpx.post(
             f"{API_URL}/v1/embeddings",
-            headers={"X-API-Key": API_KEY},
             json={"model": "bge-m3", "input": texts},
             timeout=30.0,
         )

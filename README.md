@@ -61,7 +61,7 @@
   ```bash
   docker compose -f deploy/compose/docker-compose.yml up --build
   ```
-  Роутер будет доступен на `http://localhost:${ROUTER_PORT:-8080}`.
+  Роутер будет доступен на `http://localhost:${ROUTER_PORT:-8085}`.
 
 - Вариант с Qwen3:
   ```bash

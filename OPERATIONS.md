@@ -27,8 +27,8 @@
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     Router (:8080)                               │
-│  • Аутентификация (X-API-Key)                                   │
+│                     Router (:8085)                               │
+│  • Аутентификация (опционально)                                 │
 │  • Rate Limiting (token bucket)                                  │
 │  • Маршрутизация запросов                                       │
 │  • Prometheus метрики                                            │
@@ -47,7 +47,7 @@
 
 | Сервис | Внутренний порт | Внешний порт | Описание |
 |--------|-----------------|--------------|----------|
-| Router | 8000 | 8080 | API Gateway |
+| Router | 8000 | 8085 | API Gateway |
 | Infinity | 7997 | 7997 | Embedding сервис |
 | Rerank | 9002 | 9002 | Rerank сервис |
 
@@ -85,8 +85,8 @@ nvidia-smi -L
 
 ```bash
 # Router
-curl -s http://localhost:8080/health/ready | jq
-curl -s http://localhost:8080/health/live | jq
+curl -s http://localhost:8085/health/ready | jq
+curl -s http://localhost:8085/health/live | jq
 
 # Infinity
 curl -s http://localhost:7997/health | jq
@@ -107,7 +107,7 @@ docker ps --filter "name=compose" --format "table {{.Names}}\t{{.Status}}"
 echo ""
 
 echo "=== Health Checks ==="
-echo -n "Router:   "; curl -s http://localhost:8080/health/ready | jq -r '.status'
+echo -n "Router:   "; curl -s http://localhost:8085/health/ready | jq -r '.status'
 echo -n "Infinity: "; curl -s http://localhost:7997/health > /dev/null && echo "ok" || echo "fail"
 echo -n "Rerank:   "; curl -s http://localhost:9002/health/ready | jq -r '.status'
 echo ""
@@ -224,7 +224,7 @@ sudo systemctl restart docker
 #!/bin/bash
 # healthcheck.sh - Проверка с алертингом
 
-ROUTER_URL="http://localhost:8080"
+ROUTER_URL="http://localhost:8085"
 ALERT_WEBHOOK="https://hooks.slack.com/services/xxx"
 
 check_health() {
@@ -268,7 +268,7 @@ readinessProbe:
 
 ```bash
 # Router метрики
-curl -s http://localhost:8080/metrics
+curl -s http://localhost:8085/metrics
 
 # Rerank метрики
 curl -s http://localhost:9002/metrics
@@ -353,7 +353,7 @@ rate(router_upstream_errors_total[5m])
    └─> docker ps --filter "name=compose"
 
 2. Проверить health endpoints
-   └─> curl http://localhost:8080/health/ready
+   └─> curl http://localhost:8085/health/ready
 
 3. Проверить логи проблемного сервиса
    └─> docker logs --tail 200 <container>
@@ -365,7 +365,7 @@ rate(router_upstream_errors_total[5m])
    └─> docker exec compose-router-1 curl http://infinity-embed:7997/health
 
 6. Проверить метрики
-   └─> curl http://localhost:8080/metrics | grep error
+   └─> curl http://localhost:8085/metrics | grep error
 ```
 
 ### Диагностические команды
@@ -396,14 +396,12 @@ docker events --filter container=compose-router-1 --since 1h
 
 ```bash
 # Минимальный embedding запрос
-curl -w "\nTime: %{time_total}s\n" -X POST http://localhost:8080/v1/embeddings \
-  -H "X-API-Key: test-key" \
+curl -w "\nTime: %{time_total}s\n" -X POST http://localhost:8085/v1/embeddings \
   -H "Content-Type: application/json" \
   -d '{"model": "bge-m3", "input": "test"}'
 
 # Минимальный rerank запрос
-curl -w "\nTime: %{time_total}s\n" -X POST http://localhost:8080/v1/rerank \
-  -H "X-API-Key: test-key" \
+curl -w "\nTime: %{time_total}s\n" -X POST http://localhost:8085/v1/rerank \
   -H "Content-Type: application/json" \
   -d '{"model": "rerank-base", "query": "q", "documents": ["a", "b"]}'
 
@@ -485,7 +483,7 @@ docker logs compose-infinity-embed-1 2>&1 | tail -50
 
 **Диагностика:**
 ```bash
-curl http://localhost:8080/metrics | grep rate_limit
+curl http://localhost:8085/metrics | grep rate_limit
 ```
 
 **Решения:**
@@ -500,14 +498,13 @@ curl http://localhost:8080/metrics | grep rate_limit
 **Диагностика:**
 ```bash
 # Проверить метрики
-curl -s http://localhost:8080/metrics | grep duration
+curl -s http://localhost:8085/metrics | grep duration
 
 # Проверить GPU утилизацию
 nvidia-smi
 
 # Тестовый замер
-time curl -X POST http://localhost:8080/v1/embeddings \
-  -H "X-API-Key: test-key" \
+time curl -X POST http://localhost:8085/v1/embeddings \
   -d '{"model": "bge-m3", "input": "test"}'
 ```
 
