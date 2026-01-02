@@ -14,6 +14,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY services/rerank /app/services/rerank
 
-EXPOSE 8000
+EXPOSE 9002
 
-CMD ["uvicorn", "services.rerank.src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "services.rerank.src.main:app", "--host", "0.0.0.0", "--port", "9002"]

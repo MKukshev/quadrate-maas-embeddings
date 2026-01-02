@@ -24,34 +24,45 @@ services:
       - maas
 
   infinity-embed:
-    image: infini-ai/infinity-emb:latest
+    image: michaelf34/infinity:latest
     command:
+      - "v2"
       - "--host"
       - "0.0.0.0"
       - "--port"
       - "7997"
+      - "--url-prefix"
+      - "/v1"
       - "--model-id"
-      - "BAAI/bge-m3"
-      - "--served-name"
       - "BAAI/bge-m3"
       - "--model-id"
       - "intfloat/multilingual-e5-large"
-      - "--served-name"
-      - "intfloat/multilingual-e5-large"
       - "--model-id"
-      - "ai-forever/FRIDA"
-      - "--served-name"
       - "ai-forever/FRIDA"
     ports:
       - "7997:7997"
     networks:
       - maas
+    volumes:
+      - infinity-cache:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["MIG-151dd1cc-28f0-5a52-bd26-f52f8f870314"]
+              capabilities: [gpu]
 
   rerank:
     build:
       context: ../..
       dockerfile: services/rerank/Dockerfile
+    environment:
+      RERANK_MODEL_MAPPING: '{"rerank-base": "cross-encoder/ms-marco-MiniLM-L-2-v2"}'
     ports:
       - "9002:9002"
     networks:
       - maas
+
+volumes:
+  infinity-cache:

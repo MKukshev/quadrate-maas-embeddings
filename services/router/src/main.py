@@ -173,21 +173,19 @@ def create_app() -> FastAPI:
     async def request_id_middleware(request: Request, call_next):
         request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
         request.state.request_id = request_id
-        timer = REQUEST_LATENCY.labels(endpoint=request.url.path, method=request.method).time()
         response: Response
-        try:
-            response = await call_next(request)
-        except HTTPException as exc:
-            response = await http_exception_handler(request, exc)
-        except RequestValidationError as exc:
-            response = await request_validation_exception_handler(request, exc)
-        except Exception as exc:  # pragma: no cover - defensive path
-            logger.exception(
-                "Unhandled exception for %s %s (request_id=%s)", request.method, request.url.path, request_id, exc_info=exc
-            )
-            response = error_response("Internal Server Error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        finally:
-            timer.observe_duration()
+        with REQUEST_LATENCY.labels(endpoint=request.url.path, method=request.method).time():
+            try:
+                response = await call_next(request)
+            except HTTPException as exc:
+                response = await http_exception_handler(request, exc)
+            except RequestValidationError as exc:
+                response = await request_validation_exception_handler(request, exc)
+            except Exception as exc:  # pragma: no cover - defensive path
+                logger.exception(
+                    "Unhandled exception for %s %s (request_id=%s)", request.method, request.url.path, request_id, exc_info=exc
+                )
+                response = error_response("Internal Server Error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         response.headers["X-Request-Id"] = request_id
         REQUEST_COUNTER.labels(endpoint=request.url.path, method=request.method, status=str(response.status_code)).inc()
         return response
@@ -230,11 +228,16 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     async def _check_upstream(client: httpx.AsyncClient, base_url: str) -> bool:
-        try:
-            response = await client.get(f"{base_url}/health/ready", timeout=2.0)
-            return response.status_code < 400
-        except Exception:
-            return False
+        base = base_url.rstrip('/')
+        # Try /health/ready first, then /health as fallback (for Infinity)
+        for endpoint in ["/health/ready", "/health"]:
+            try:
+                response = await client.get(f"{base}{endpoint}", timeout=2.0)
+                if response.status_code < 400:
+                    return True
+            except Exception:
+                continue
+        return False
 
     @app.get("/health/ready")
     async def ready(request: Request, state: ApplicationState = Depends(get_state)) -> Response:
@@ -425,7 +428,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Requested top_k exceeds max_top_k")
         top_k = min(requested_top_k, len(payload.documents))
 
-        tokenizer_name = state.settings.tokenizer_name or route.model
+        tokenizer_name = state.settings.tokenizer_name or route.served_name or route.model
         tokenizer = tokenizer_provider.get(tokenizer_name)
 
         query_tokens = count_text_tokens(tokenizer, payload.query)
