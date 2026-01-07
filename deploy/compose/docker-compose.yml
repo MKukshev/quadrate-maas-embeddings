@@ -3,6 +3,8 @@ version: "3.9"
 networks:
   maas:
     driver: bridge
+  quadrate-lan:
+    external: true
 
 services:
   router:
@@ -19,39 +21,58 @@ services:
       QWEN3_ENABLED: ${QWEN3_ENABLED:-false}
       QWEN3_API_KEY: ${QWEN3_API_KEY:-}
     ports:
-      - "${ROUTER_PORT:-8080}:8000"
+      - "${ROUTER_PORT:-8085}:8000"
     networks:
       - maas
+      - quadrate-lan
 
   infinity-embed:
-    image: infini-ai/infinity-emb:latest
+    image: michaelf34/infinity:latest
+    environment:
+      HF_HUB_DISABLE_XET: "1"
     command:
+      - "v2"
       - "--host"
       - "0.0.0.0"
       - "--port"
       - "7997"
+      - "--url-prefix"
+      - "/v1"
       - "--model-id"
-      - "BAAI/bge-m3"
-      - "--served-name"
       - "BAAI/bge-m3"
       - "--model-id"
       - "intfloat/multilingual-e5-large"
-      - "--served-name"
-      - "intfloat/multilingual-e5-large"
       - "--model-id"
-      - "ai-forever/FRIDA"
-      - "--served-name"
       - "ai-forever/FRIDA"
     ports:
       - "7997:7997"
     networks:
       - maas
+      - quadrate-lan
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    volumes:
+      - infinity-cache:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["MIG-151dd1cc-28f0-5a52-bd26-f52f8f870314"]
+              capabilities: [gpu]
 
   rerank:
     build:
       context: ../..
       dockerfile: services/rerank/Dockerfile
+    environment:
+      RERANK_MODEL_MAPPING: '{"rerank-base": "BAAI/bge-reranker-v2-m3"}'
     ports:
       - "9002:9002"
     networks:
       - maas
+      - quadrate-lan
+
+volumes:
+  infinity-cache:

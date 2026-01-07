@@ -56,7 +56,7 @@ class RerankRequest(BaseModel):
 
 
 class ServiceSettings(BaseModel):
-    model_name: str = Field(default="cross-encoder/ms-marco-MiniLM-L-2-v2")
+    model_name: str = Field(default="BAAI/bge-reranker-v2-m3")
     model_mapping: dict[str, str] = Field(default_factory=dict)
     max_documents: int = Field(default=50, ge=1)
     max_document_length: int = Field(default=4096, ge=1)
@@ -175,25 +175,23 @@ def create_app(model_loader: Callable[[ServiceSettings], RerankModel] | None = N
     async def request_metrics_middleware(request: Request, call_next):
         request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
         request.state.request_id = request_id
-        timer = REQUEST_LATENCY.labels(endpoint=request.url.path, method=request.method).time()
         response: Response
         error_type = None
-        try:
-            response = await call_next(request)
-        except HTTPException as exc:
-            error_type = f"http_{exc.status_code}"
-            response = await http_exception_handler(request, exc)
-        except RequestValidationError as exc:
-            error_type = "validation_error"
-            response = await request_validation_exception_handler(request, exc)
-        except Exception as exc:  # pragma: no cover - defensive path
-            error_type = "unhandled_exception"
-            logger.exception(
-                "Unhandled exception for %s %s (request_id=%s)", request.method, request.url.path, request_id, exc_info=exc
-            )
-            response = error_response("Internal Server Error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        finally:
-            timer.observe_duration()
+        with REQUEST_LATENCY.labels(endpoint=request.url.path, method=request.method).time():
+            try:
+                response = await call_next(request)
+            except HTTPException as exc:
+                error_type = f"http_{exc.status_code}"
+                response = await http_exception_handler(request, exc)
+            except RequestValidationError as exc:
+                error_type = "validation_error"
+                response = await request_validation_exception_handler(request, exc)
+            except Exception as exc:  # pragma: no cover - defensive path
+                error_type = "unhandled_exception"
+                logger.exception(
+                    "Unhandled exception for %s %s (request_id=%s)", request.method, request.url.path, request_id, exc_info=exc
+                )
+                response = error_response("Internal Server Error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         response.headers["X-Request-Id"] = request_id
         if error_type and not getattr(request.state, "error_recorded", False):
             _record_error(request, error_type)

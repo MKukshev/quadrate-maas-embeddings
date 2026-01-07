@@ -17,8 +17,9 @@ async def rerank(
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
 
+    base_url = str(config.url).rstrip("/")
     response = await client.post(
-        f"{config.url}/v1/rerank",
+        f"{base_url}/v1/rerank",
         json=payload,
         headers=headers,
         timeout=config.get_timeout(client.timeout),

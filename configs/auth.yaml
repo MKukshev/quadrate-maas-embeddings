@@ -1,4 +1,2 @@
-api_keys:
-  - "test-key"
-  - "admin-key"
-allow_anonymous_without_api_keys: false
+api_keys: []
+allow_anonymous_without_api_keys: true

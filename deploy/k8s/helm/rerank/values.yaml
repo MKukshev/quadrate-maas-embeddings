@@ -10,7 +10,7 @@ service:
   port: 9002
 
 env:
-  modelName: "cross-encoder/ms-marco-MiniLM-L-2-v2"
+  modelName: "BAAI/bge-reranker-v2-m3"
   modelMapping: "{}"
   maxDocuments: 50
   maxDocumentLength: 4096

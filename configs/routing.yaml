@@ -30,6 +30,7 @@ embeddings:
 
 rerank:
   - model: "rerank-base"
+    served_name: "BAAI/bge-reranker-v2-m3"
     enabled: true
     max_top_k: 50
     upstream:

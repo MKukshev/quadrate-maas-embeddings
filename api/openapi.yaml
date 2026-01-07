@@ -182,6 +182,14 @@ components:
         usage:
           $ref: "#/components/schemas/Usage"
 
+    CancelResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: ["canceled", "completed", "not_found"]
+
     # ---------- Rerank ----------
     RerankDocument:
       type: object
@@ -391,6 +399,42 @@ paths:
       responses:
         "200":
           description: Cancellation status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/requests/{request_id}/cancel:
+    post:
+      tags: [embeddings]
+      summary: Cancel an in-flight request by request_id
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Request ID from X-Request-Id header.
+      responses:
+        "200":
+          description: Cancel request status
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
           content:
             application/json:
               schema:

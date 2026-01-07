@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROUTER_URL=${ROUTER_URL:-"http://localhost:8000"}
-ROUTER_API_KEY=${ROUTER_API_KEY:-"test-key"}
+ROUTER_URL=${ROUTER_URL:-"http://localhost:8085"}
 
 models=("bge-m3" "multilingual-e5-large" "frida")
 
@@ -23,7 +22,6 @@ call_embedding() {
   local model=$1
   echo "==> Embeddings for model: ${model}"
   curl -sf \
-    -H "X-API-Key: ${ROUTER_API_KEY}" \
     -H "Content-Type: application/json" \
     -X POST \
     -d "{\"model\":\"${model}\",\"input\":\"hello from smoke test\"}" \
@@ -42,7 +40,6 @@ done
 docs_joined=$(IFS=,; echo "${docs[*]}")
 
 curl -sf \
-  -H "X-API-Key: ${ROUTER_API_KEY}" \
   -H "Content-Type: application/json" \
   -X POST \
   -d "{\"model\":\"rerank-base\",\"query\":\"test\",\"documents\":[${docs_joined}],\"top_k\":5}" \

@@ -60,6 +60,7 @@ class RerankRoute(BaseModel):
 
     model: str
     model_version: Optional[str] = Field(default=None, description="Optional version identifier for the route")
+    served_name: Optional[str] = Field(default=None, description="Upstream served model name for tokenization")
     enabled: bool = True
     max_top_k: int = Field(default=200, ge=1)
     feature_flag: Optional[str] = Field(default=None, description="Feature flag controlling availability")
