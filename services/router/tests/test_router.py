@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import queue
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -622,6 +624,60 @@ def test_embeddings_returns_499_on_client_disconnect(tmp_path: Path, monkeypatch
         assert (
             'router_client_disconnects_total{endpoint="/v1/embeddings",stage="before_upstream"}' in metrics
         )
+
+
+def test_cancel_request_endpoint_cancels_inflight_embeddings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path)
+    with_env(monkeypatch, paths)
+
+    event = asyncio.Event()
+
+    async def _slow_embeddings(*args, **kwargs):
+        await event.wait()
+        return {"object": "list", "data": [{"object": "embedding", "embedding": [0.1], "index": 0}], "model": "test-embedding"}
+
+    monkeypatch.setattr(infinity, "embeddings", _slow_embeddings)
+
+    app = create_app()
+    with TestClient(app) as client:
+        request_id = "req-cancel-1"
+        result_queue: queue.Queue[object] = queue.Queue()
+
+        def _run_request():
+            try:
+                response = client.post(
+                    "/v1/embeddings",
+                    json={"model": "test-embedding", "input": "hello"},
+                    headers={"X-API-Key": "test-key", "X-Request-Id": request_id},
+                )
+                result_queue.put(response)
+            except Exception as exc:  # pragma: no cover - defensive for thread errors
+                result_queue.put(exc)
+
+        thread = threading.Thread(target=_run_request)
+        thread.start()
+
+        for _ in range(50):
+            if request_id in client.app.state.state.inflight_requests:
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("inflight request was not tracked")
+
+        cancel_response = client.post(
+            f"/v1/requests/{request_id}/cancel",
+            headers={"X-API-Key": "test-key"},
+        )
+        assert cancel_response.status_code == 200
+        assert cancel_response.json()["status"] == "canceled"
+
+        thread.join(timeout=1.0)
+        if thread.is_alive():
+            event.set()
+            thread.join(timeout=1.0)
+
+        assert not thread.is_alive()
+        assert request_id not in client.app.state.state.inflight_requests
 
 
 @pytest.mark.anyio
