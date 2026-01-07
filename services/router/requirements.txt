@@ -6,6 +6,6 @@ pydantic-settings
 prometheus-client
 pyyaml
 pytest
-httpx-mock
+pytest-httpx
 transformers
 opentelemetry-api

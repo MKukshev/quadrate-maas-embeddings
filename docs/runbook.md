@@ -12,8 +12,8 @@ export RATE_LIMITS_PATH=configs/rate_limits.yaml
 uvicorn services.router.src.main:app --host 0.0.0.0 --port 8000
 
 # Rerank
-export RERANK_MODEL_NAME=cross-encoder/ms-marco-MiniLM-L-2-v2
-export RERANK_MODEL_MAPPING='{"rerank-base": "cross-encoder/ms-marco-MiniLM-L-2-v2"}'
+export RERANK_MODEL_NAME=BAAI/bge-reranker-v2-m3
+export RERANK_MODEL_MAPPING='{"rerank-base": "BAAI/bge-reranker-v2-m3"}'
 uvicorn services.rerank.src.main:app --host 0.0.0.0 --port 9002
 ```
 
