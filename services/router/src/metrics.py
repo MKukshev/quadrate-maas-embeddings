@@ -49,3 +49,9 @@ READINESS_DEGRADED_EVENTS = Counter(
     "Number of degraded readiness responses grouped by failing upstream count",
     ["failing_count"],
 )
+
+CLIENT_DISCONNECTS = Counter(
+    "router_client_disconnects_total",
+    "Number of requests canceled because the client disconnected",
+    ["endpoint", "stage"],
+)
