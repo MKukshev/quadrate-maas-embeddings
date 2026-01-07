@@ -88,6 +88,7 @@ class ApplicationState:
     rate_limiter: RateLimiter
     http_client: httpx.AsyncClient
     tokenizer_provider: TokenizerProvider
+    inflight_requests: dict[str, asyncio.Task]
     routing_mtime: float | None = None
     routing_reload_task: asyncio.Task | None = None
 
@@ -127,6 +128,7 @@ async def lifespan(app: FastAPI):
         rate_limiter=rate_limiter,
         tokenizer_provider=tokenizer_provider,
         http_client=http_client,
+        inflight_requests={},
         routing_mtime=settings.routing_path.stat().st_mtime if settings.routing_path.exists() else None,
     )
 
@@ -307,70 +309,99 @@ def create_app() -> FastAPI:
                 )
                 raise HTTPException(status_code=499, detail="Client disconnected")
 
+        request_id = request.state.request_id
+        task = asyncio.current_task()
+        if task is not None:
+            state.inflight_requests[request_id] = task
         await rate_limiter.check(api_key)
 
-        route = state.routing.embeddings.get(payload.model)
-        if route is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown model")
-        if not route.enabled:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model disabled")
-
-        request_id = request.state.request_id
-        tokenizer_name = state.settings.tokenizer_name or route.served_name or payload.model
-        tokenizer = tokenizer_provider.get(tokenizer_name)
-
-        input_texts = payload.input if isinstance(payload.input, list) else [payload.input]
-        input_token_counts = [count_text_tokens(tokenizer, text) for text in input_texts]
-        total_tokens = sum(input_token_counts)
-        safe_limit = state.settings.safe_request_token_limit
-        if safe_limit is not None and total_tokens > safe_limit:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Request token count {total_tokens} exceeds safe limit {safe_limit}",
-            )
-
-        doc_limit = state.settings.document_token_limit
-        if doc_limit is not None:
-            truncated_inputs = [truncate_text_to_tokens(tokenizer, text, doc_limit) for text in input_texts]
-        else:
-            truncated_inputs = input_texts
-
-        await ensure_client_connected("before_upstream")
-
-        upstream_payload = {"input": truncated_inputs if isinstance(payload.input, list) else truncated_inputs[0], "model": payload.model}
         try:
-            if route.upstream.type == UpstreamType.INFINITY:
-                served_name = getattr(route, "served_name", None)
-                with UPSTREAM_LATENCY.labels(upstream=route.upstream.url.host, operation="embeddings").time():
-                    await ensure_client_connected("before_infinity_embeddings")
-                    result = await infinity.embeddings(
-                        state.http_client,
-                        route.upstream,
-                        upstream_payload,
-                        request_id,
-                        served_model=served_name,
-                    )
-                    await ensure_client_connected("after_infinity_embeddings")
-            elif route.upstream.type == UpstreamType.QWEN3:
-                with UPSTREAM_LATENCY.labels(upstream=route.upstream.url.host, operation="embeddings").time():
-                    await ensure_client_connected("before_qwen3_embeddings")
-                    result = await qwen3.embeddings(state.http_client, route.upstream, upstream_payload, request_id)
-                    await ensure_client_connected("after_qwen3_embeddings")
-            else:
+            route = state.routing.embeddings.get(payload.model)
+            if route is None:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown model")
+            if not route.enabled:
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model disabled")
+
+            tokenizer_name = state.settings.tokenizer_name or route.served_name or payload.model
+            tokenizer = tokenizer_provider.get(tokenizer_name)
+
+            input_texts = payload.input if isinstance(payload.input, list) else [payload.input]
+            input_token_counts = [count_text_tokens(tokenizer, text) for text in input_texts]
+            total_tokens = sum(input_token_counts)
+            safe_limit = state.settings.safe_request_token_limit
+            if safe_limit is not None and total_tokens > safe_limit:
                 raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=f"Unsupported upstream for embeddings: {route.upstream.type}",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Request token count {total_tokens} exceeds safe limit {safe_limit}",
                 )
-        except httpx.HTTPStatusError as exc:
-            UPSTREAM_ERRORS.labels(
-                upstream=route.upstream.url.host, operation="embeddings", status=str(exc.response.status_code)
-            ).inc()
-            raise HTTPException(status_code=exc.response.status_code, detail=str(exc)) from exc
-        except httpx.RequestError as exc:
-            UPSTREAM_ERRORS.labels(upstream=route.upstream.url.host, operation="embeddings", status="request_error").inc()
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-        ensure_response_model_matches(result, payload.model)
-        return result
+
+            doc_limit = state.settings.document_token_limit
+            if doc_limit is not None:
+                truncated_inputs = [truncate_text_to_tokens(tokenizer, text, doc_limit) for text in input_texts]
+            else:
+                truncated_inputs = input_texts
+
+            await ensure_client_connected("before_upstream")
+
+            upstream_payload = {
+                "input": truncated_inputs if isinstance(payload.input, list) else truncated_inputs[0],
+                "model": payload.model,
+            }
+            try:
+                if route.upstream.type == UpstreamType.INFINITY:
+                    served_name = getattr(route, "served_name", None)
+                    with UPSTREAM_LATENCY.labels(upstream=route.upstream.url.host, operation="embeddings").time():
+                        await ensure_client_connected("before_infinity_embeddings")
+                        result = await infinity.embeddings(
+                            state.http_client,
+                            route.upstream,
+                            upstream_payload,
+                            request_id,
+                            served_model=served_name,
+                        )
+                        await ensure_client_connected("after_infinity_embeddings")
+                elif route.upstream.type == UpstreamType.QWEN3:
+                    with UPSTREAM_LATENCY.labels(upstream=route.upstream.url.host, operation="embeddings").time():
+                        await ensure_client_connected("before_qwen3_embeddings")
+                        result = await qwen3.embeddings(state.http_client, route.upstream, upstream_payload, request_id)
+                        await ensure_client_connected("after_qwen3_embeddings")
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail=f"Unsupported upstream for embeddings: {route.upstream.type}",
+                    )
+            except httpx.HTTPStatusError as exc:
+                UPSTREAM_ERRORS.labels(
+                    upstream=route.upstream.url.host, operation="embeddings", status=str(exc.response.status_code)
+                ).inc()
+                raise HTTPException(status_code=exc.response.status_code, detail=str(exc)) from exc
+            except httpx.RequestError as exc:
+                UPSTREAM_ERRORS.labels(
+                    upstream=route.upstream.url.host, operation="embeddings", status="request_error"
+                ).inc()
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+            ensure_response_model_matches(result, payload.model)
+            return result
+        finally:
+            if task is not None and state.inflight_requests.get(request_id) is task:
+                state.inflight_requests.pop(request_id, None)
+
+    @app.post("/v1/requests/{request_id}/cancel")
+    async def cancel_request(
+        request_id: str,
+        api_key: str = Depends(api_key_dependency),
+        rate_limiter: RateLimiter = Depends(get_rate_limiter),
+        state: ApplicationState = Depends(get_state),
+    ) -> dict[str, str]:
+        await rate_limiter.check(api_key)
+        task = state.inflight_requests.get(request_id)
+        if task is None:
+            return {"status": "not_found"}
+        if task.done():
+            state.inflight_requests.pop(request_id, None)
+            return {"status": "completed"}
+        task.cancel()
+        return {"status": "canceled"}
 
     @app.post("/v1/rerank")
     async def rerank_endpoint(
