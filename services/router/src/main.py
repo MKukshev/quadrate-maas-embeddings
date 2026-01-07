@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .auth import Authenticator
 from .metrics import (
+    CLIENT_DISCONNECTS,
     READINESS_DEGRADED_EVENTS,
     READINESS_PARTIAL_FAILURES,
     RERANK_DOCUMENTS_COUNTER,
@@ -295,6 +296,17 @@ def create_app() -> FastAPI:
         tokenizer_provider: TokenizerProvider = Depends(get_tokenizer_provider),
         state: ApplicationState = Depends(get_state),
     ):
+        async def ensure_client_connected(stage: str) -> None:
+            if await request.is_disconnected():
+                CLIENT_DISCONNECTS.labels(endpoint="/v1/embeddings", stage=stage).inc()
+                logger.info(
+                    "Client disconnected during embeddings request (stage=%s, request_id=%s)",
+                    stage,
+                    getattr(request.state, "request_id", "unknown"),
+                    extra={"event": "client_disconnected", "stage": stage},
+                )
+                raise HTTPException(status_code=499, detail="Client disconnected")
+
         await rate_limiter.check(api_key)
 
         route = state.routing.embeddings.get(payload.model)
@@ -323,11 +335,14 @@ def create_app() -> FastAPI:
         else:
             truncated_inputs = input_texts
 
+        await ensure_client_connected("before_upstream")
+
         upstream_payload = {"input": truncated_inputs if isinstance(payload.input, list) else truncated_inputs[0], "model": payload.model}
         try:
             if route.upstream.type == UpstreamType.INFINITY:
                 served_name = getattr(route, "served_name", None)
                 with UPSTREAM_LATENCY.labels(upstream=route.upstream.url.host, operation="embeddings").time():
+                    await ensure_client_connected("before_infinity_embeddings")
                     result = await infinity.embeddings(
                         state.http_client,
                         route.upstream,
@@ -335,9 +350,12 @@ def create_app() -> FastAPI:
                         request_id,
                         served_model=served_name,
                     )
+                    await ensure_client_connected("after_infinity_embeddings")
             elif route.upstream.type == UpstreamType.QWEN3:
                 with UPSTREAM_LATENCY.labels(upstream=route.upstream.url.host, operation="embeddings").time():
+                    await ensure_client_connected("before_qwen3_embeddings")
                     result = await qwen3.embeddings(state.http_client, route.upstream, upstream_payload, request_id)
+                    await ensure_client_connected("after_qwen3_embeddings")
             else:
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,

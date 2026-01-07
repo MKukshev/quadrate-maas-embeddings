@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
@@ -14,6 +16,7 @@ from opentelemetry import trace
 from services.router.src.main import create_app
 from services.router.src.routing import UpstreamConfig, load_routing_config
 from services.router.src.tokenization import TokenizerProvider
+from services.router.src.upstream import infinity, qwen3
 
 
 def write_yaml(path: Path, content: dict) -> None:
@@ -595,3 +598,51 @@ def test_qwen_contract_accepts_embeddings_field(httpx_mock, tmp_path: Path, monk
     assert body["data"][0]["embedding"] == [1, 2, 3]
     assert body["data"][0]["index"] == 0
     assert body["model"] == "test-embedding"
+
+
+def test_embeddings_returns_499_on_client_disconnect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    paths = setup_configs(tmp_path)
+    with_env(monkeypatch, paths)
+
+    async def _disconnected(self) -> bool:
+        return True
+
+    monkeypatch.setattr("fastapi.Request.is_disconnected", _disconnected)
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "test-embedding", "input": "hello"},
+            headers={"X-API-Key": "test-key"},
+        )
+
+        assert response.status_code == 499
+        metrics = client.get("/metrics").text
+        assert (
+            'router_client_disconnects_total{endpoint="/v1/embeddings",stage="before_upstream"}' in metrics
+        )
+
+
+@pytest.mark.anyio
+async def test_infinity_embeddings_propagates_cancelled_error(caplog):
+    client = SimpleNamespace(timeout=5, post=AsyncMock(side_effect=asyncio.CancelledError))
+    config = UpstreamConfig(type="infinity", url="http://embed-upstream")
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(asyncio.CancelledError):
+            await infinity.embeddings(client, config, {"model": "test-embedding", "input": "hello"}, "req-1")
+
+    assert any("Infinity upstream request canceled" in record.message for record in caplog.records)
+
+
+@pytest.mark.anyio
+async def test_qwen3_embeddings_propagates_cancelled_error(caplog):
+    client = SimpleNamespace(timeout=5, post=AsyncMock(side_effect=asyncio.CancelledError))
+    config = UpstreamConfig(type="qwen3", url="http://qwen-upstream")
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(asyncio.CancelledError):
+            await qwen3.embeddings(client, config, {"model": "test-embedding", "input": "hello"}, "req-2")
+
+    assert any("Qwen3 upstream request canceled" in record.message for record in caplog.records)

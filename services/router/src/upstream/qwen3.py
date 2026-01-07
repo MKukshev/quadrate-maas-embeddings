@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+
 import httpx
 
 from ..routing import UpstreamConfig
+
+logger = logging.getLogger(__name__)
 
 
 async def embeddings(
@@ -17,12 +22,21 @@ async def embeddings(
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
 
-    response = await client.post(
-        f"{config.url}/v1/embeddings",
-        json=payload,
-        headers=headers,
-        timeout=config.get_timeout(client.timeout),
-    )
+    try:
+        response = await client.post(
+            f"{config.url}/v1/embeddings",
+            json=payload,
+            headers=headers,
+            timeout=config.get_timeout(client.timeout),
+        )
+    except asyncio.CancelledError:
+        logger.info(
+            "Qwen3 upstream request canceled (request_id=%s, upstream=%s)",
+            request_id,
+            config.url,
+            extra={"event": "upstream_cancelled", "upstream": str(config.url)},
+        )
+        raise
     response.raise_for_status()
     data = response.json()
     embeddings_data = data.get("data") or data.get("embeddings") or []

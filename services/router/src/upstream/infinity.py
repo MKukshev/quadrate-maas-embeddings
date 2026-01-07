@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+
 import httpx
 
 from ..routing import UpstreamConfig
+
+logger = logging.getLogger(__name__)
 
 
 async def embeddings(
@@ -23,12 +28,21 @@ async def embeddings(
         "model": served_model or payload.get("model"),
     }
 
-    response = await client.post(
-        f"{config.url}/v1/embeddings",
-        json=upstream_payload,
-        headers=headers,
-        timeout=config.get_timeout(client.timeout),
-    )
+    try:
+        response = await client.post(
+            f"{config.url}/v1/embeddings",
+            json=upstream_payload,
+            headers=headers,
+            timeout=config.get_timeout(client.timeout),
+        )
+    except asyncio.CancelledError:
+        logger.info(
+            "Infinity upstream request canceled (request_id=%s, upstream=%s)",
+            request_id,
+            config.url,
+            extra={"event": "upstream_cancelled", "upstream": str(config.url)},
+        )
+        raise
     response.raise_for_status()
     data = response.json()
 
