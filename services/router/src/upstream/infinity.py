@@ -28,10 +28,9 @@ async def embeddings(
         "model": served_model or payload.get("model"),
     }
 
-    base_url = str(config.url).rstrip("/")
     try:
         response = await client.post(
-            f"{base_url}/v1/embeddings",
+            f"{config.url}/v1/embeddings",
             json=upstream_payload,
             headers=headers,
             timeout=config.get_timeout(client.timeout),
@@ -40,8 +39,8 @@ async def embeddings(
         logger.info(
             "Infinity upstream request canceled (request_id=%s, upstream=%s)",
             request_id,
-            base_url,
-            extra={"event": "upstream_cancelled", "upstream": base_url},
+            config.url,
+            extra={"event": "upstream_cancelled", "upstream": str(config.url)},
         )
         raise
     response.raise_for_status()

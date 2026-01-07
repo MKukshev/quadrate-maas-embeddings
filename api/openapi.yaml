@@ -263,6 +263,14 @@ components:
           items:
             $ref: "#/components/schemas/RerankResult"
 
+    CancelResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: ["not_found", "completed", "canceled"]
+
 paths:
   /health/live:
     get:
@@ -365,6 +373,44 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: Upstream unavailable / timeout
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "499":
+          description: Client disconnected before the request completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/requests/{request_id}/cancel:
+    post:
+      tags: [embeddings]
+      summary: Cancel an in-flight embeddings request by request id
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - in: path
+          name: request_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Cancellation status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limited
           content:
             application/json:
               schema:

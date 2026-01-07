@@ -316,9 +316,9 @@ def create_app() -> FastAPI:
         task = asyncio.current_task()
         if task is not None:
             state.inflight_requests[request_id] = task
-        await rate_limiter.check(api_key)
-
         try:
+            await rate_limiter.check(api_key)
+
             route = state.routing.embeddings.get(payload.model)
             if route is None:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown model")
