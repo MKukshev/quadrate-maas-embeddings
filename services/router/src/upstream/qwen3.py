@@ -22,9 +22,10 @@ async def embeddings(
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
 
+    base_url = str(config.url).rstrip("/")
     try:
         response = await client.post(
-            f"{config.url}/v1/embeddings",
+            f"{base_url}/v1/embeddings",
             json=payload,
             headers=headers,
             timeout=config.get_timeout(client.timeout),
@@ -33,8 +34,8 @@ async def embeddings(
         logger.info(
             "Qwen3 upstream request canceled (request_id=%s, upstream=%s)",
             request_id,
-            config.url,
-            extra={"event": "upstream_cancelled", "upstream": str(config.url)},
+            base_url,
+            extra={"event": "upstream_cancelled", "upstream": base_url},
         )
         raise
     response.raise_for_status()
